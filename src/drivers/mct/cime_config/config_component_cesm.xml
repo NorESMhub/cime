@@ -487,6 +487,27 @@
     </desc>
   </entry>
 
+  <entry id="SURFACE_FLUX_SCHEME">
+    <type>char</type>
+    <valid_values>0,1,2</valid_values>
+    <default_value>0</default_value>
+    <values match="last">
+      <value compset="_CAM5%PTAEROUPD1">1</value>
+      <value compset="_CAM60%PTAERO">1</value>
+      <value compset="_CAM60%NORESM">1</value>
+      <value compset="_CAM54%PTAERO">1</value>
+      <value compset="_CAM5%NUDGEPTAEROUPD1">1</value>
+      <value compset="_CAM54%NUDGEPTAERO">1</value>
+      <value compset="_CAM60%NUDGEPTAERO">1</value>
+      <value compset="_BLOM">1</value>
+    </values>
+    <group>run_component_cpl</group>
+    <file>env_run.xml</file>
+    <desc>
+      Default is 0 and 1 for N* compsets, controls value of OCN_SURFACE_FLUX_SCHEME
+    </desc>
+  </entry>
+
   <entry id="CPL_EPBAL">
     <type>char</type>
     <valid_values>off,ocn</valid_values>

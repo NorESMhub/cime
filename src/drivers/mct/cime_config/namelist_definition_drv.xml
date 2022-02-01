@@ -754,7 +754,8 @@
       default: 0
      </desc>
      <values>
-      <value>0</value>
+      <!--value>0</value-->
+      <value>$SURFACE_FLUX_SCHEME</value>
      </values>
   </entry>
 
