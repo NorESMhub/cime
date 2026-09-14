@@ -13,13 +13,13 @@ This test the model's restart capability as well as the short term archiver's in
 
 from CIME.SystemTests.restart_tests import RestartTest
 from CIME.XML.standard_module_setup import *
-from CIME.utils import ls_sorted_by_mtime
+from CIME.utils import ls_sorted_by_fname
 
 logger = logging.getLogger(__name__)
 
 
 class IRT(RestartTest):
-    def __init__(self, case):
+    def __init__(self, case, **kwargs):
         RestartTest.__init__(
             self,
             case,
@@ -28,6 +28,7 @@ class IRT(RestartTest):
             run_one_description="initial",
             run_two_description="restart",
             multisubmit=False,
+            **kwargs
         )
         self._skip_pnl = False
 
@@ -35,7 +36,7 @@ class IRT(RestartTest):
         self._case.case_st_archive()
         # Since preview namelist is run before _case_two_prerun_action, we need to do this here.
         dout_s_root = self._case1.get_value("DOUT_S_ROOT")
-        restart_list = ls_sorted_by_mtime(os.path.join(dout_s_root, "rest"))
+        restart_list = ls_sorted_by_fname(os.path.join(dout_s_root, "rest"))
         logger.info("Restart directory list is {}".format(restart_list))
         expect(len(restart_list) >= 2, "Expected at least two restart directories")
         # Get the older of the two restart directories

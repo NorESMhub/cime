@@ -1,16 +1,11 @@
 <?xml version="1.0"?>
 <!-- This is an ordered list, not all fields are required, optional fields are noted below. -->
-<config_machines version="2.0">
+<config_machines version="3.0">
 <!-- MACH is the name that you will use in machine options -->
   <machine MACH="mymachine">
 
     <!-- DESC: a text description of the machine, this field is current not used in code-->
     <DESC>SITE VENDOR platform, os is ---, xx pes/node, batch system is ---</DESC>
-
-	<!-- NODENAME_REGEX: a regular expression used to identify this machine
-	  it must work on compute nodes as well as login nodes, use machine option
-	  to create_test or create_newcase if this flag is not available -->
-    <NODENAME_REGEX>.*.cheyenne.ucar.edu</NODENAME_REGEX>
 
     <!-- OS: the operating system of this machine. Passed to cppflags for
 	 compiled programs as -DVALUE  recognized are LINUX, AIX, Darwin, CNL -->
@@ -76,6 +71,16 @@
 
     <!-- GMAKE_J: optional number of threads to pass to the gmake flag -->
     <GMAKE_J>8</GMAKE_J>
+
+    <!-- BATCHED_BUILD: optional, if TRUE case.build will allow submission of the build
+      as a batch job instead of building on the current (login) node.
+      Requires a batch system to be configured (BATCH_SYSTEM != none).
+      Default is FALSE. -->
+    <!-- <BATCHED_BUILD>FALSE</BATCHED_BUILD> -->
+
+    <!-- CMAKE_BACKEND: optional, if set, it will tell cmake which backend to use.
+      Default is unset which means use gmake. -->
+    <!-- <CMAKE_BACKEND>ninja</CMAKE_BACKEND> -->
 
     <!-- BATCH_SYSTEM: batch system used on this machine,
       supported values are: none, cobalt, lsf, pbs, slurm -->

@@ -1,10 +1,15 @@
 """
 Interface to the config_tests.xml file.  This class inherits from GenericEntry
 """
+
 from CIME.XML.standard_module_setup import *
 
 from CIME.XML.generic_xml import GenericXML
 from CIME.XML.files import Files
+from CIME.core.exceptions import CIMEError
+from CIME.utils import find_system_test
+from CIME.SystemTests.system_tests_compare_two import SystemTestsCompareTwo
+from CIME.SystemTests.system_tests_compare_n import SystemTestsCompareN
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +24,46 @@ class Tests(GenericXML):
                 files = Files()
             infile = files.get_value("CONFIG_TESTS_FILE")
         GenericXML.__init__(self, infile)
-        # append any component specific config_tests.xml files
+
+        # Append any component-specific config_tests.xml files. We take care to only add a
+        # given file once, since adding a given file multiple times creates a "multiple
+        # matches" error. (This can happen if multiple CONFIG_TESTS_FILEs resolve to the
+        # same path.)
+        files_added = set()
         for comp in files.get_components("CONFIG_TESTS_FILE"):
             if comp is None:
                 continue
             infile = files.get_value("CONFIG_TESTS_FILE", attribute={"component": comp})
-            if os.path.isfile(infile):
+            infile_abspath = os.path.abspath(infile)
+            if os.path.isfile(infile) and infile_abspath not in files_added:
                 self.read(infile)
+                files_added.add(infile_abspath)
+
+    def support_single_exe(self, case):
+        """Checks if case supports --single-exe.
+
+        Raises:
+            Exception: If system test cannot be found.
+            Exception: If `case` does not support --single-exe.
+        """
+        testname = case.get_value("TESTCASE")
+
+        try:
+            test = find_system_test(testname, case)(case, dry_run=True)
+        except Exception as e:
+            raise e
+        else:
+            # valid if subclass is SystemTestsCommon or _separate_builds is false
+            valid = (
+                not issubclass(type(test), SystemTestsCompareTwo)
+                and not issubclass(type(test), SystemTestsCompareN)
+            ) or not test._separate_builds
+
+        if not valid:
+            case_base_id = case.get_value("CASEBASEID")
+            raise CIMEError(
+                f"{case_base_id} does not support the '--single-exe' option as it requires separate builds"
+            )
 
     def get_test_node(self, testname):
         logger.debug("Get settings for {}".format(testname))

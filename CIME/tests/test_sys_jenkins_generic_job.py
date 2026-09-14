@@ -61,18 +61,17 @@ class TestJenkinsGenericJob(base.BaseTestCase):
             self._thread_error = str(e)
 
     def assert_num_leftovers(self, suite):
-        num_tests_in_tiny = len(get_tests.get_test_suite(suite))
+        num_tests_in_suite = len(get_tests.get_test_suite(suite))
 
-        jenkins_dirs = glob.glob(
-            "%s/*%s*/" % (self._jenkins_root, self._baseline_name.capitalize())
-        )  # case dirs
+        case_glob = "%s/*%s*/" % (self._jenkins_root, self._baseline_name.capitalize())
+        jenkins_dirs = glob.glob(case_glob)  # Case dirs
         # scratch_dirs = glob.glob("%s/*%s*/" % (self._testroot, test_id)) # blr/run dirs
 
         self.assertEqual(
-            num_tests_in_tiny,
+            num_tests_in_suite,
             len(jenkins_dirs),
-            msg="Wrong number of leftover directories in %s, expected %d, see %s"
-            % (self._jenkins_root, num_tests_in_tiny, jenkins_dirs),
+            msg="Wrong number of leftover directories in %s, expected %d, see %s. Glob checked %s"
+            % (self._jenkins_root, num_tests_in_suite, jenkins_dirs, case_glob),
         )
 
         # JGF: Can't test this at the moment due to root change flag given to jenkins_generic_job
@@ -97,6 +96,21 @@ class TestJenkinsGenericJob(base.BaseTestCase):
         )  # jenkins_generic_job should have automatically cleaned up leftovers from prior run
         self.assert_dashboard_has_build(build_name)
 
+    def test_jenkins_generic_job_save_timing(self):
+        self.simple_test(
+            True, "-t cime_test_timing --save-timing -b %s" % self._baseline_name
+        )
+        self.assert_num_leftovers("cime_test_timing")
+
+        jenkins_dirs = glob.glob(
+            "%s/*%s*/" % (self._jenkins_root, self._baseline_name.capitalize())
+        )  # case dirs
+        case = jenkins_dirs[0]
+        result = self.run_cmd_assert_result(
+            "./xmlquery --value SAVE_TIMING", from_dir=case
+        )
+        self.assertEqual(result, "TRUE")
+
     def test_jenkins_generic_job_kill(self):
         build_name = "jenkins_generic_job_kill_%s" % utils.get_timestamp()
         run_thread = threading.Thread(
@@ -120,6 +134,68 @@ class TestJenkinsGenericJob(base.BaseTestCase):
             msg="Thread had failure: %s" % self._thread_error,
         )
         self.assert_dashboard_has_build(build_name)
+
+    def test_jenkins_generic_job_compiler_isolation(self):
+        """Two runs sharing a jenkins-id but using different compilers must not
+        interfere with each other.  The cleanup/archive logic in
+        handle_old_test_data scopes its glob patterns by mach_comp
+        (``{machine}_{compiler}``), so a run with compiler B should leave the
+        test-case directories produced by a prior run with compiler A
+        completely untouched."""
+        compilers = self.MACHINE.get_value("COMPILERS").split(",")
+        compilers = [c.strip() for c in compilers if c.strip()]
+        if len(compilers) < 2:
+            self.skipTest(
+                "Need at least 2 compilers to test compiler isolation; "
+                f"only found: {compilers}"
+            )
+
+        compiler_a = compilers[0]
+        compiler_b = compilers[1]
+        jenkins_id = f"ciso_{utils.get_timestamp()}"
+        machine_name = self.MACHINE.get_machine_name()
+        mach_comp_a = f"{machine_name}_{compiler_a}"
+        mach_comp_b = f"{machine_name}_{compiler_b}"
+
+        # First run: compiler A
+        self.simple_test(
+            True,
+            f"-t cime_test_only_pass --compiler {compiler_a} --jenkins-id {jenkins_id} -b {self._baseline_name}",
+        )
+
+        # Capture the directories created by compiler A's run.
+        dirs_a = glob.glob(f"{self._jenkins_root}/*{mach_comp_a}*/")
+        self.assertGreater(
+            len(dirs_a),
+            0,
+            msg=f"Expected test directories for compiler {compiler_a} in {self._jenkins_root}",
+        )
+
+        # Second run: compiler B, same jenkins-id
+        self.simple_test(
+            True,
+            f"-t cime_test_only_pass --compiler {compiler_b} --jenkins-id {jenkins_id} -b {self._baseline_name}",
+        )
+
+        # Compiler A's directories must still be present — compiler B's
+        # cleanup/archive pass must not have touched them.
+        dirs_a_after = glob.glob(f"{self._jenkins_root}/*{mach_comp_a}*/")
+        self.assertEqual(
+            set(dirs_a),
+            set(dirs_a_after),
+            msg=(
+                f"Compiler {compiler_b} run altered directories belonging to "
+                f"compiler {compiler_a}. Before: {dirs_a}. After: {dirs_a_after}."
+            ),
+        )
+
+        # Sanity-check: compiler B also produced its own directories.
+        dirs_b = glob.glob(f"{self._jenkins_root}/*{mach_comp_b}*/")
+        self.assertGreater(
+            len(dirs_b),
+            0,
+            msg=f"Expected test directories for compiler {compiler_b} in {self._jenkins_root}",
+        )
 
     def test_jenkins_generic_job_realistic_dash(self):
         # The actual quality of the cdash results for this test can only

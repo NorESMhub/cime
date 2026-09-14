@@ -4,10 +4,38 @@ on:
   push:
     branches:
       - master
+    paths:
+      - 'CIME/**'
+      - 'scripts/**'
+      - 'tools/**'
+      - 'utils/**'
+      - 'docker/**'
+      - '.dockerignore'
+      - '.gitignore'
+      - '.github/workflows/testing.yml'
+      - '.pre-commit-config.yaml'
+      - 'pyproject.toml'
+      - 'setup.py'
+      - 'test-requirements.txt'
 
   pull_request:
     branches:
       - master
+    paths:
+      - 'CIME/**'
+      - 'scripts/**'
+      - 'tools/**'
+      - 'utils/**'
+      - 'docker/**'
+      - '.dockerignore'
+      - '.gitignore'
+      - '.github/workflows/testing.yml'
+      - '.pre-commit-config.yaml'
+      - 'pyproject.toml'
+      - 'setup.py'
+      - 'test-requirements.txt'
+
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.ref }}
@@ -17,176 +45,262 @@ permissions:
   contents: read # to fetch code (actions/checkout)
 
 jobs:
+  # Build container image for PRs (local only, saved as artifact)
+  build-pr-image:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: "true"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          file: docker/Dockerfile
+          context: .
+          load: true
+          tags: cime:pr-${{ github.event.pull_request.number }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Save image as artifact
+        run: |
+          docker save cime:pr-${{ github.event.pull_request.number }} | gzip > /tmp/cime-image.tar.gz
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cime-docker-image
+          path: /tmp/cime-image.tar.gz
+          retention-days: 1
+
+  # Publish container image only on pushes to master
+  publish-image:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: "true"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          file: docker/Dockerfile
+          context: .
+          push: true
+          tags: ghcr.io/esmci/cime:latest
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   pre-commit:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' && ! cancelled() }}
     timeout-minutes: 2
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Set up python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.9
-      # Offical action is deprecated in favor of pre-commit.ci
-      # Should evaulate switching or just running manually.
-      # - name: Runs pre-commit action
-      #   # Do not run if using act tooling (https://github.com/nektos/act)
-      #   if: ${{ !env.ACT }}
-      #   uses: pre-commit/action@v2.0.3
+          python-version: '3.10'
       - name: Runs pre-commit
         run: |
           pip install pre-commit
-
           pre-commit run -a
-
-  # Check if there has been a change to any file under docker/
-  get-docker-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      any_changed: ${{ steps.get-changed-files.outputs.any_changed }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 2
-      - name: Get changed files
-        id: get-changed-files
-        uses: tj-actions/changed-files@v29
-        with:
-          files: docker
-
-  # Only build container if there has been a change.
-  build-containers:
-    runs-on: ubuntu-latest
-    needs: get-docker-changes
-    if: ${{ needs.get-docker-changes.outputs.any_changed == 'true' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: jasonb87/cime
-          tags: |
-            type=raw,value=latest
-            type=sha,prefix={{ date 'YYYYMMDD' }}_,format=short
-      - name: Build and push
-        uses: docker/build-push-action@v3
-        with:
-          target: base
-          context: docker/
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=jasonb87/cime:buildcache
-          cache-to: type=registry,ref=jasonb87/cime:buildcache,mode=max
 
   # Runs unit testing under different python versions.
   unit-testing:
     runs-on: ubuntu-latest
-    needs: build-containers
-    if: ${{ always() && ! cancelled() }}
-    container: jasonb87/cime:latest
+    if: ${{ github.event_name == 'pull_request' && needs.build-pr-image.result == 'success' && ! cancelled() }}
+    needs: build-pr-image
     strategy:
+      fail-fast: false
       matrix:
-        python-version: [3.7, 3.8, 3.9]
+        python-version: ["3.9", "3.10", "3.12", "3.13", "3.14"]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Run tests
-        shell: bash
-        env:
-          INIT: "false"
-          CIME_MODEL: "cesm"
-          CIME_DRIVER: "mct"
-          UPDATE_CIME: "true"
-          GIT_SHALLOW: "true"
-          CIME_TEST_PLATFORM: ubuntu-latest
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cime-docker-image
+          path: /tmp
+      - name: Load Docker image
         run: |
-          export INSTALL_PATH="${PWD}"
-          export CIME_REPO=https://github.com/${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          export CIME_BRANCH=${GITHUB_HEAD_REF:-${GITHUB_REF##*/}}
+          gunzip -c /tmp/cime-image.tar.gz | docker load
+      - name: Checkout model code
+        uses: actions/checkout@v4
+        with:
+          repository: ESCOMP/CESM
+          path: cesm
+          ref: cesm3.0-alphabranch
+      - name: Get ccs_config dependency
+        working-directory: cesm
+        run: |
+          # Need these for machine files
+          ./bin/git-fleximod update ccs_config
 
-          mamba install -y python=${{ matrix.python-version }}
+          # Remove CIME to checkout
+          rm -rf cime/
 
-          source /entrypoint.sh
-
-          git config --global --add safe.directory /__w/cime/cime
-
-          init_cime
-
-          pytest -vvv --machine docker --no-fortran-run CIME/tests/test_unit*
+          git status
+          git submodule status
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: cesm/cime
+          submodules: "true"
+      - name: Run tests
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/cesm:/root/cesm \
+            -w /root/cesm/cime \
+            -e CIME_MODEL=cesm \
+            -e CIME_DRIVER=nuopc \
+            -e CIME_TEST_PLATFORM=ubuntu-latest \
+            -e SKIP_ENTRYPOINT=true \
+            cime:pr-${{ github.event.pull_request.number }} \
+            bash -c "
+              source /entrypoint.sh
+              uv python install ${{ matrix.python-version }}
+              uv venv
+              source .venv/bin/activate
+              uv pip install -r test-requirements.txt
+              uv run pytest -vvv --cov=CIME --cov-branch --cov-report=xml --machine docker CIME/tests/test_unit*
+            "
+      - name: Upload coverage reports to Codecov
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # Run system tests
   system-testing:
     runs-on: ubuntu-latest
-    needs: build-containers
-    if: ${{ always() && ! cancelled() }}
-    container: jasonb87/cime:latest
+    if: ${{ github.event_name == 'pull_request' && needs.build-pr-image.result == 'success' && ! cancelled() }}
+    needs: build-pr-image
     strategy:
+      # allow all jobs to finish
+      fail-fast: false
       matrix:
-        model: ["e3sm", "cesm"]
+        model:
+          - name: "e3sm"
+            repo: E3SM-Project/e3sm
+            branch: master
+          - name: "cesm"
+            repo: ESCOMP/CESM
+            branch: cesm3.0-alphabranch
         driver: ["mct", "nuopc"]
         exclude:
           # exclude nuopc driver when running e3sm tests
-          - model: "e3sm"
+          - model: { name: "e3sm" }
             driver: "nuopc"
+          # exclude mct driver when running cesm tests
+          - model: { name: "cesm" }
+            driver: "mct"
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Cache inputdata
-        uses: actions/cache@v2
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
         with:
-          path: /storage/inputdata
-          key: inputdata-2
-      - name: Run tests
-        shell: bash
-        env:
-          INIT: "false"
-          CIME_MODEL: ${{ matrix.model }}
-          CIME_DRIVER: ${{ matrix.driver }}
-          UPDATE_CIME: "true"
-          GIT_SHALLOW: "true"
-          CIME_TEST_PLATFORM: ubuntu-latest
+          name: cime-docker-image
+          path: /tmp
+      - name: Load Docker image
         run: |
-          export INSTALL_PATH="${PWD}/cime"
-          export CIME_REPO=https://github.com/${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          export CIME_BRANCH=${GITHUB_HEAD_REF:-${GITHUB_REF##*/}}
+          gunzip -c /tmp/cime-image.tar.gz | docker load
+      - name: Checkout model code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.model.repo }}
+          path: ${{ matrix.model.name }}
+          ref: ${{ matrix.model.branch }}
+      - name: Check out model dependencies
+        shell: bash
+        working-directory: ${{ matrix.model.name }}
+        run: |
+          # need https for submodules
+          sed -i"" "s/\(.*\)url = git@github.com:\(.*\)/\1url = https:\/\/github.com\/\2/g" .gitmodules
 
-          source /entrypoint.sh
-
-          git config --global --add safe.directory /__w/cime/cime
-
-          if [[ "${CIME_MODEL}" == "e3sm" ]]
-          then
-            init_e3sm
+          if [[ "${{ matrix.model.name }}" == "e3sm" ]]; then
+            git submodule update --init
           else
-            init_cime
+            ./bin/git-fleximod update
           fi
 
-          source /opt/conda/etc/profile.d/conda.sh
+          # remove cime so it can be checkedout
+          rm -rf cime/
 
-          conda activate base
-
-          pytest -vvv --machine docker --no-fortran-run --no-teardown CIME/tests/test_sys*
+          git status
+          git submodule status
+      - name: Checkout CIME
+        uses: actions/checkout@v4
+        with:
+          path: ${{ matrix.model.name }}/cime
+          submodules: 'true'
+      - name: Create storage directory
+        run: mkdir -p ${{ github.workspace }}/storage/inputdata
+      - name: Cache inputdata
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/storage/inputdata
+          key: inputdata-2
+      - name: Run tests
+        run: |
+          docker run --rm \
+            --hostname docker \
+            --shm-size=1g \
+            -v ${{ github.workspace }}/${{ matrix.model.name }}:/root/model \
+            -v ${{ github.workspace }}/storage:/root/storage \
+            -w /root/model/cime \
+            -e CIME_MODEL=${{ matrix.model.name }} \
+            -e CIME_DRIVER=${{ matrix.driver }} \
+            -e CIME_TEST_PLATFORM=ubuntu-latest \
+            -e SKIP_ENTRYPOINT=true \
+            cime:pr-${{ github.event.pull_request.number }} \
+            bash -c "
+              source /entrypoint.sh
+              uv python install 3.10
+              uv venv
+              source .venv/bin/activate
+              uv pip install -r test-requirements.txt
+              git config --global user.name '${{ github.actor }}'
+              git config --global user.email '${{ github.actor }}@users.noreply.github.com'
+              uv run pytest -vvv --cov=CIME --cov-branch --cov-report=xml --machine docker --pesfile /root/.cime/config_pes.xml --no-fortran-run --no-teardown CIME/tests/test_sys*
+            "
+      - name: Upload coverage reports to Codecov
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: mxschmitt/action-tmate@v3
+        if: ${{ failure() && !cancelled() }}
+        with:
+          limit-access-to-actor: true
       - name: Create testing log archive
         if: ${{ failure() }}
         shell: bash
-        run: tar -czvf /testing-logs-${GITHUB_RUN_NUMBER}.tar.gz /storage/cases/
+        run: |
+          tar -czvf ${{ github.workspace }}/testing-logs-${{ github.run_number }}-${{ matrix.model.name }}-${{ matrix.driver }}.tar.gz \
+            --ignore-failed-read \
+            ${{ github.workspace }}/storage/cases \
+            ${{ github.workspace }}/storage/baselines \
+            ${{ github.workspace }}/storage/archive \
+            2>/dev/null || true
       - name: Upload testing logs
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: testing-logs-${{ github.run_number }}
-          path: /testing-logs-${{ github.run_number}}.tar.gz
+          name: testing-logs-${{ github.run_number }}-${{ matrix.model.name }}-${{ matrix.driver }}
+          path: ${{ github.workspace }}/testing-logs-${{ github.run_number }}-${{ matrix.model.name }}-${{ matrix.driver }}.tar.gz
           retention-days: 4

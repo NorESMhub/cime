@@ -239,6 +239,8 @@ def parse_command_line(args, cimeroot, description):
 
     parser.add_argument(
         "--driver",
+        # use get_cime_default_driver rather than config.driver_default as it considers
+        # environment, user config then config.driver_default
         default=get_cime_default_driver(),
         choices=drv_choices,
         help=drv_help,
@@ -261,13 +263,6 @@ def parse_command_line(args, cimeroot, description):
     )
 
     parser.add_argument("--case-group", help="Add this case to a case group")
-
-    parser.add_argument(
-        "--ngpus-per-node",
-        default=0,
-        type=int,
-        help="Specify number of GPUs used for simulation. ",
-    )
 
     args = CIME.utils.parse_args_and_handle_standard_logging_options(args, parser)
 
@@ -344,7 +339,6 @@ WARNING: if you need support migrating to the ESMF/NUOPC infrastructure.
         args.non_local,
         args.extra_machines_dir,
         args.case_group,
-        args.ngpus_per_node,
     )
 
 
@@ -381,7 +375,6 @@ def _main_func(description=None):
         non_local,
         extra_machines_dir,
         case_group,
-        ngpus_per_node,
     ) = parse_command_line(sys.argv, cimeroot, description)
 
     if script_root is None:
@@ -446,7 +439,6 @@ def _main_func(description=None):
             non_local=non_local,
             extra_machines_dir=extra_machines_dir,
             case_group=case_group,
-            ngpus_per_node=ngpus_per_node,
         )
 
         # Called after create since casedir does not exist yet

@@ -1,26 +1,211 @@
+import os
+import re
 import sys
-import glob
 import logging
 import importlib.machinery
 import importlib.util
+import inspect
+from pathlib import Path
 
 from CIME import utils
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CUSTOMIZE_PATH = os.path.join(utils.get_src_root(), "cime_config", "customize")
 
-class Config:
+
+def print_rst_header(header, anchor=None, separator='"'):
+    n = len(header)
+    if anchor is not None:
+        print(f".. _{anchor}\n")
+    print(separator * n)
+    print(header)
+    print(separator * n)
+
+
+def print_rst_table(headers, *rows):
+    column_widths = []
+
+    columns = [[rows[y][x] for y in range(len(rows))] for x in range(len(rows[0]))]
+
+    for header, column in zip(headers, columns):
+        column_widths.append(
+            max(
+                [
+                    len(x)
+                    for x in [
+                        header,
+                    ]
+                    + column
+                ]
+            )
+        )
+
+    divider = " ".join([f"{'=' * x}" for x in column_widths])
+
+    print(divider)
+    print(" ".join(f"{y}{' ' * (x - len(y))}" for x, y in zip(column_widths, headers)))
+    print(divider)
+
+    for row in rows:
+        print(" ".join([f"{y}{' ' * (x-len(y))}" for x, y in zip(column_widths, row)]))
+
+    print(divider)
+
+
+class ConfigBase:
     def __new__(cls):
         if not hasattr(cls, "_instance"):
-            cls._instance = super(Config, cls).__new__(cls)
+            cls._instance = super(ConfigBase, cls).__new__(cls)
 
         return cls._instance
 
     def __init__(self):
-        if getattr(self, "_loaded", False):
-            return
-
         self._attribute_config = {}
+
+    @property
+    def loaded(self):
+        return getattr(self, "_loaded", False)
+
+    @classmethod
+    def instance(cls):
+        """Access singleton.
+
+        Explicit way to access singleton, same as calling constructor.
+        """
+        return cls()
+
+    @classmethod
+    def load(cls, customize_path):
+        obj = cls()
+
+        logger.debug("Searching %r for files to load", customize_path)
+
+        customize_path = Path(customize_path)
+
+        if customize_path.is_file():
+            customize_files = [f"{customize_path}"]
+        else:
+            ignore_pattern = re.compile(f"{customize_path}/(?:tests|conftest|test_)")
+
+            # filter out any tests
+            customize_files = [
+                f"{x}"
+                for x in customize_path.glob("**/*.py")
+                if ignore_pattern.search(f"{x}") is None
+            ]
+
+        customize_module_spec = importlib.machinery.ModuleSpec("cime_customize", None)
+
+        customize_module = importlib.util.module_from_spec(customize_module_spec)
+
+        sys.modules["CIME.customize"] = customize_module
+
+        for x in sorted(customize_files):
+            obj._load_file(x, customize_module)
+
+        setattr(obj, "_loaded", True)
+
+        return obj
+
+    def _load_file(self, file_path, customize_module):
+        logger.debug("Loading file %r", file_path)
+
+        raw_config = utils.import_from_file("raw_config", file_path)
+
+        # filter user define variables and functions
+        user_defined = [x for x in dir(raw_config) if not x.endswith("__")]
+
+        # set values on this object, will overwrite existing
+        for x in user_defined:
+            try:
+                value = getattr(raw_config, x)
+            except AttributeError:
+                # should never hit this
+                logger.fatal("Attribute %r missing on obejct", x)
+
+                sys.exit(1)
+            else:
+                setattr(customize_module, x, value)
+
+                self._set_attribute(x, value)
+
+    def _set_attribute(self, name, value, desc=None):
+        if hasattr(self, name):
+            logger.debug("Overwriting %r attribute", name)
+
+        logger.debug("Setting attribute %r with value %r", name, value)
+
+        setattr(self, name, value)
+
+        self._attribute_config[name] = {
+            "desc": desc,
+            "default": value,
+        }
+
+    def print_rst_table(self):
+        self.print_variable_rst()
+
+        print("")
+
+        self.print_method_rst()
+
+    def print_variable_rst(self):
+        print_rst_header("Variables", anchor=f"{self.__class__.__name__} Variables:")
+
+        headers = ("Variable", "Default", "Type", "Description")
+
+        rows = (
+            (x, str(y["default"]), type(y["default"]).__name__, y["desc"])
+            for x, y in self._attribute_config.items()
+        )
+
+        print_rst_table(headers, *rows)
+
+    def print_method_rst(self):
+        print_rst_header("Methods", anchor=f"{self.__class__.__name__} Methods:")
+
+        methods = inspect.getmembers(self, inspect.ismethod)
+
+        ignore = (
+            "__init__",
+            "loaded",
+            "load",
+            "instance",
+            "_load_file",
+            "_set_attribute",
+            "print_rst_table",
+            "print_method_rst",
+            "print_variable_rst",
+        )
+
+        child_methods = [
+            (x[0], inspect.signature(x[1]), inspect.getdoc(x[1]))
+            for x in methods
+            if x[1].__class__ != Config and x[0] not in ignore
+        ]
+
+        for (name, sig, doc) in child_methods:
+            if doc is None:
+                continue
+            print(".. code-block::\n")
+            print(f"  def {name}{sig!s}:")
+            print('      """')
+            for line in doc.split("\n"):
+                print(f"      {line}")
+            print('      """')
+
+
+class Config(ConfigBase):
+    @classmethod
+    def load_defaults(cls):
+        return cls.load(DEFAULT_CUSTOMIZE_PATH)
+
+    def __init__(self):
+        super().__init__()
+
+        if self.loaded:
+            return
 
         self._set_attribute(
             "additional_archive_components",
@@ -178,11 +363,6 @@ class Config:
             desc="If set to `True` then COMP_ROOT_DIR_CPL is set using UFS_DRIVER if defined.",
         )
         self._set_attribute(
-            "gpus_use_set_device_rank",
-            True,
-            desc="If set to `True` and NGPUS_PER_NODE > 0 then `$RUNDIR/set_device_rank.sh` is appended when the MPI run command is generated.",
-        )
-        self._set_attribute(
             "test_custom_project_machine",
             "melvin",
             desc="Sets the machine name to use when testing a machine with no PROJECT.",
@@ -192,7 +372,7 @@ class Config:
         )
         self._set_attribute(
             "driver_choices",
-            ("mct", "nuopc"),
+            ("nuopc",),
             desc="Sets the available driver choices for the model.",
         )
         self._set_attribute(
@@ -200,107 +380,8 @@ class Config:
             "{srcroot}/libraries/mct",
             desc="Sets the path to the mct library.",
         )
-
-    @classmethod
-    def instance(cls):
-        """Access singleton.
-
-        Explicit way to access singleton, same as calling constructor.
-        """
-        return cls()
-
-    @classmethod
-    def load(cls, customize_path):
-        obj = cls()
-
-        logger.debug("Searching %r for files to load", customize_path)
-
-        customize_files = glob.glob(f"{customize_path}/**/*.py", recursive=True)
-
-        # filter out any tests
-        customize_files = [
-            x for x in customize_files if "tests" not in x and "conftest" not in x
-        ]
-
-        customize_module_spec = importlib.machinery.ModuleSpec("cime_customize", None)
-
-        customize_module = importlib.util.module_from_spec(customize_module_spec)
-
-        sys.modules["CIME.customize"] = customize_module
-
-        for x in sorted(customize_files):
-            obj._load_file(x, customize_module)
-
-        setattr(obj, "_loaded", True)
-
-        return obj
-
-    def _load_file(self, file_path, customize_module):
-        logger.debug("Loading file %r", file_path)
-
-        raw_config = utils.import_from_file("raw_config", file_path)
-
-        # filter user define variables and functions
-        user_defined = [x for x in dir(raw_config) if not x.endswith("__")]
-
-        # set values on this object, will overwrite existing
-        for x in user_defined:
-            try:
-                value = getattr(raw_config, x)
-            except AttributeError:
-                # should never hit this
-                logger.fatal("Attribute %r missing on obejct", x)
-
-                sys.exit(1)
-            else:
-                setattr(customize_module, x, value)
-
-                self._set_attribute(x, value)
-
-    def _set_attribute(self, name, value, desc=None):
-        if hasattr(self, name):
-            logger.debug("Overwriting %r attribute", name)
-
-        logger.debug("Setting attribute %r with value %r", name, value)
-
-        setattr(self, name, value)
-
-        self._attribute_config[name] = {
-            "desc": desc,
-            "default": value,
-        }
-
-    def print_rst_table(self):
-        max_variable = max([len(x) for x in self._attribute_config.keys()])
-        max_default = max(
-            [len(str(x["default"])) for x in self._attribute_config.values()]
+        self._set_attribute(
+            "mpi_serial_path",
+            "{srcroot}/libraries/mpi-serial",
+            desc="Sets the path to the mpi-serial library.",
         )
-        max_type = max(
-            [len(type(x["default"]).__name__) for x in self._attribute_config.values()]
-        )
-        max_desc = max([len(x["desc"]) for x in self._attribute_config.values()])
-
-        divider_row = (
-            f"{'='*max_variable}  {'='*max_default}  {'='*max_type}  {'='*max_desc}"
-        )
-
-        rows = [
-            divider_row,
-            f"Variable{' '*(max_variable-8)}  Default{' '*(max_default-7)}  Type{' '*(max_type-4)}  Description{' '*(max_desc-11)}",
-            divider_row,
-        ]
-
-        for variable, value in sorted(
-            self._attribute_config.items(), key=lambda x: x[0]
-        ):
-            variable_fill = max_variable - len(variable)
-            default_fill = max_default - len(str(value["default"]))
-            type_fill = max_type - len(type(value["default"]).__name__)
-
-            rows.append(
-                f"{variable}{' '*variable_fill}  {value['default']}{' '*default_fill}  {type(value['default']).__name__}{' '*type_fill}  {value['desc']}"
-            )
-
-        rows.append(divider_row)
-
-        print("\n".join(rows))

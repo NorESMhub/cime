@@ -3,11 +3,57 @@ Base class for archive files.  This class inherits from generic_xml.py
 """
 from CIME.XML.standard_module_setup import *
 from CIME.XML.generic_xml import GenericXML
+from CIME.utils import convert_to_type
 
 logger = logging.getLogger(__name__)
 
 
 class ArchiveBase(GenericXML):
+    def get_archive_specs(self):
+        components_element = self.get_child("components")
+
+        return self.get_children("comp_archive_spec", root=components_element)
+
+    def get_rpointer_nodes(self, root):
+        assert root.name == "comp_archive_spec"
+
+        return self.get_children("rpointer", root=root)
+
+    def get_rpointers(self, root):
+        for node in self.get_rpointer_nodes(root):
+            file = self.get_child("rpointer_file", root=node).text
+
+            content = self.get_child("rpointer_content", root=node).text
+
+            yield file, content
+
+    def exclude_testing(self, compname):
+        """
+        Checks if component should be excluded from testing.
+        """
+        value = self._get_attribute(compname, "exclude_testing")
+
+        if value is None:
+            return False
+
+        return convert_to_type(value, "logical")
+
+    def _get_attribute(self, compname, attr_name):
+        attrib = self.get_entry_attributes(compname)
+
+        if attrib is None:
+            return None
+
+        return attrib.get(attr_name, None)
+
+    def get_entry_attributes(self, compname):
+        entry = self.get_entry(compname)
+
+        if entry is None:
+            return None
+
+        return self.attrib(entry)
+
     def get_entry(self, compname):
         """
         Returns an xml node corresponding to compname in comp_archive_spec
@@ -99,10 +145,6 @@ class ArchiveBase(GenericXML):
         # remove when component name is changed
         if model == "fv3gfs":
             model = "fv3"
-        if model == "cice5":
-            model = "cice"
-        if model == "ww3dev":
-            model = "ww3"
 
         hist_files = []
         extensions = self.get_hist_file_extensions(self.get_entry(dmodel))
@@ -115,9 +157,19 @@ class ArchiveBase(GenericXML):
         for ext in extensions:
             if ext.endswith("$") and has_suffix:
                 ext = ext[:-1]
-            string = model + r"\d?_?(\d{4})?\." + ext
+            # The first part of this regex forces the model name to appear
+            # either at the start of the string or following a '.', '-' or '_'.
+            # Without this, re.search would find the model name anywhere in the
+            # file name, so a model whose name is a substring of another model's
+            # name (e.g. "eam" within "scream") would match the other model's
+            # history files.
+            string = r"(?:^|[\.\-_])" + model + r"\d?_?(\d{4})?(_d\d{2})?\." + ext
             if has_suffix:
-                string += "." + suffix + "$"
+                if not suffix in string:
+                    string += r"\." + suffix + "$"
+
+                if not string.endswith("$"):
+                    string += "$"
 
             logger.debug("Regex is {}".format(string))
             pfile = re.compile(string)
@@ -205,10 +257,7 @@ def _get_extension(model, filepath, ext_regexes):
     # Remove with component namechange
     if model == "fv3gfs":
         model = "fv3"
-    if model == "cice5":
-        model = "cice"
-    if model == "ww3dev":
-        model = "ww3"
+
     basename = os.path.basename(filepath)
     m = None
     if ext_regexes is None:

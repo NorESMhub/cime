@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import print_function
 import os, sys
 
 _CIMEROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../..")
@@ -110,28 +109,15 @@ requires genf90.pl to be in the user's path.""",
     )
 
     parser.add_argument(
-        "--use-mpi",
-        action="store_true",
-        help="""If specified, run unit tests with an mpi-enabled version
-                        of pFUnit, via mpirun. (Default is to use a serial build without
-                        mpirun.) This requires a pFUnit build with MPI support.""",
-    )
-
-    parser.add_argument(
         "--mpilib",
+        default="mpi-serial",
         help="""MPI Library to use in build.
-                        If not specified, use the default for this machine/compiler.
-                        Must match an MPILIB option in config_compilers.xml.
-                        e.g., for cheyenne, can use 'mpt'.
-                        Only relevant if --use-mpi is specified.""",
+                        If not specified, use mpi-serial.
+                        Note that we don't fully support running parallel tests,
+                        but this option allows use of an mpi-based software stack
+                        rather than requiring an mpi-serial-based software stack."""
     )
 
-    parser.add_argument(
-        "--mpirun-command",
-        help="""Command to use to run an MPI executable.
-                        If not specified, uses the default for this machine.
-                        Only relevant if --use-mpi is specified.""",
-    )
     parser.add_argument(
         "--test-spec-dir",
         default=".",
@@ -185,9 +171,7 @@ override the command provided by Machines.""",
         args.machine,
         args.machines_dir,
         args.make_j,
-        args.use_mpi,
         args.mpilib,
-        args.mpirun_command,
         args.test_spec_dir,
         args.ctest_args,
         args.use_openmp,
@@ -202,7 +186,6 @@ def cmake_stage(
     test_spec_dir,
     build_optimized,
     use_mpiserial,
-    mpirun_command,
     output,
     pfunit_path,
     cmake_args=None,
@@ -246,8 +229,7 @@ def cmake_stage(
             "-DCIME_CMAKE_MODULE_DIRECTORY="
             + os.path.abspath(os.path.join(_CIMEROOT, "CIME", "non_py", "src", "CMake")),
             "-DCMAKE_BUILD_TYPE=" + build_type,
-            "-DPFUNIT_MPIRUN='" + mpirun_command + "'",
-            "-DPFUNIT_PATH=" + pfunit_path,
+            "-DCMAKE_PREFIX_PATH=" + pfunit_path,
         ]
         if use_mpiserial:
             cmake_command.append("-DUSE_MPI_SERIAL=ON")
@@ -329,9 +311,7 @@ def _main():
         machine,
         machines_dir,
         make_j,
-        use_mpi,
         mpilib,
-        mpirun_command,
         test_spec_dir,
         ctest_args,
         use_openmp,
@@ -391,11 +371,10 @@ def _main():
     # Functions to perform various stages of build.
     # =================================================
 
-    if not use_mpi:
-        mpilib = "mpi-serial"
-    elif mpilib is None:
-        mpilib = machobj.get_default_MPIlib()
-        logger.info("Using mpilib: {}".format(mpilib))
+    # Note that we currently only have partial support for a real MPI library: We allow
+    # use of something other than mpi-serial in order to find the appropriate software
+    # stack and do the build, but we don't currently support running parallel tests.
+    use_mpiserial = (mpilib == "mpi-serial")
 
     if compiler is None:
         compiler = machobj.get_default_compiler()
@@ -454,24 +433,6 @@ def _main():
         )
         os.environ["NETCDF"] = os.environ["NETCDFROOT"]
 
-    if not use_mpi:
-        mpirun_command = ""
-    elif mpirun_command is None:
-        mpi_attribs = {
-            "compiler": compiler,
-            "mpilib": mpilib,
-            "threaded": use_openmp,
-            "comp_interface": comp_interface,
-            "unit_testing": True,
-        }
-
-        # We can get away with specifying case=None since we're using exe_only=True
-        mpirun_command, _, _, _ = machspecific.get_mpirun(
-            None, mpi_attribs, None, exe_only=True
-        )
-        mpirun_command = machspecific.get_resolved_value(mpirun_command)
-        logger.info("mpirun command is '{}'".format(mpirun_command))
-
     # =================================================
     # Run tests.
     # =================================================
@@ -496,13 +457,11 @@ def _main():
 
             if not os.path.islink("Macros.cmake"):
                 os.symlink(os.path.join(build_dir, "Macros.cmake"), "Macros.cmake")
-            use_mpiserial = not use_mpi
             cmake_stage(
                 name,
                 directory,
                 build_optimized,
                 use_mpiserial,
-                mpirun_command,
                 output,
                 pfunit_path,
                 verbose=verbose,

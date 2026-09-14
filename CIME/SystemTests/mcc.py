@@ -11,9 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 class MCC(SystemTestsCompareTwo):
-    def __init__(self, case):
+    def __init__(self, case, **kwargs):
         self._comp_classes = []
         self._test_instances = 3
+        ninst = case.get_value("NINST")
+        if ninst > 1:
+            self._test_instances = ninst
+
         SystemTestsCompareTwo.__init__(
             self,
             case,
@@ -21,6 +25,7 @@ class MCC(SystemTestsCompareTwo):
             run_two_suffix="single_instance",
             run_two_description="single instance",
             run_one_description="multi driver",
+            **kwargs
         )
 
     def _case_one_setup(self):
