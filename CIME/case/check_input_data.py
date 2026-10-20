@@ -7,6 +7,8 @@ from CIME.XML.inputdata import Inputdata
 import CIME.Servers
 
 import glob, hashlib, shutil
+import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 # The inputdata_checksum.dat file will be read into this hash if it's available
@@ -695,3 +697,68 @@ def md5(fname):
         for chunk in iter(lambda: f.read(4096), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
+
+
+def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf"):
+    
+    """
+    Link files existing in DIN_CACHE_ROOT to DIN_LOC_ROOT if they exist.
+    if they don't try to sync them with a cdl service through hydrator.
+    """
+    case.load_env(reset=True)
+
+    # Fill in defaults as needed
+    input_data_root = (
+        case.get_value("DIN_LOC_ROOT") if input_data_root is None else input_data_root
+    )
+    input_data_root=Path(input_data_root).resolve()
+    cache_root = (
+        case.get_value("DIN_CACHE_ROOT") if input_data_root is None else input_data_root
+    )
+    cache_root=Path(cache_root).resolve()
+    expect(
+        os.path.isdir(data_list_dir),
+        "Invalid data_list_dir directory: '{}'".format(data_list_dir),
+    )
+    data_list_files = find_files(data_list_dir, "*.input_data_list")
+    
+    if not data_list_files:
+        logger.warning(
+            "WARNING: No .input_data_list files found in dir '{}'".format(data_list_dir)
+        )
+
+    missing_in_cache=[]
+    for data_list_file in data_list_files:
+        logger.info("Loading input file list: '{}'".format(data_list_file))
+        with open(data_list_file, "r") as fd:
+            lines = fd.readlines()
+        for line in lines:
+            line = line.strip()
+            line_path = Path(line).resolve()
+            #check if file is there or a valid symlink
+            if str(input_data_root) in str(line_path):
+                #only check of existence of files that are suppose to be in i DIN_LOC_ROOT
+                if not (line_path.is_file() or (line_path.is_symlink() and line_path.exists())):
+                    rel_path=line_path.relative_to(input_data_root)
+                    cache_path = cache_root / rel_path
+                    if not cache_path.is_file():
+                        missing_in_cache.append(rel_path)
+                    else:
+                        line_path.parent.mkdir(parents=True, exist_ok=True)
+                        line_path.symlink_to(cache_path)
+    if missing_in_cache != []:
+        # get .conf template
+        cache_conf_template=Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
+        cache_conf_template = cache_conf_template.resolve()
+        if not cache_conf_template.is_file():
+            logger.error( f"config file for caching inputdata: {cache_conf_template} not found."
+                          f" Though caching of inputdata is required on {case.get_value("MACH")}")
+        manifest_path=Path(case.get_value("RUNDIR")) / Path("cached_inputdata.filelist")
+        with open(manifest_path,"w") as manifest:
+            for f in missing_in_cache:
+                manifest.write(f"{f}\n")
+        conf_path = Path(case.get_value("RUNDIR")) / Path(f"noresm-{os.environ.get("USER")}-{time.strftime("%Y%m%d-%H%M%S")}.conf")
+        shutil.copy(cache_conf_template,conf_path)
+        with open(conf_path,'a') as conf_file:
+            conf_file.write(f"manifest = {manifest_path.absolute()}")
+        

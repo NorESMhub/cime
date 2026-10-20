@@ -91,18 +91,24 @@ def _main_func(description):
     ) = parse_command_line(sys.argv, description)
 
     with Case() as case:
-        sys.exit(
-            0
-            if case.check_all_input_data(
-                protocol=protocol,
-                address=address,
-                input_data_root=input_data_root,
-                data_list_dir=data_list_dir,
-                download=download,
-                chksum=chksum,
+        if case.get_value('MACHINE') != 'olivia':
+            sys.exit(
+                0
+                if case.check_all_input_data(
+                    protocol=protocol,
+                    address=address,
+                    input_data_root=input_data_root,
+                    data_list_dir=data_list_dir,
+                    download=download,
+                    chksum=chksum,
+                )
+                else 1
             )
-            else 1
-        )
+        else:
+            # On olivia, we are using special cache directory to manage inputdata.
+            # it is populated based on config toml's that are picked up by a hydrator
+            # from a specific cdl service on NIRD.
+            print("TODO")
 
 
 ###############################################################################
