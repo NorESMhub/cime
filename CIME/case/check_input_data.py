@@ -733,6 +733,7 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
         )
 
     missing_in_cache=[]
+    missing_links=[]
     for data_list_file in data_list_files:
         logger.info("Loading input file list: '{}'".format(data_list_file))
         with open(data_list_file, "r") as fd:
@@ -774,6 +775,7 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
                         cache_path = cache_root / rel_path
                         if not cache_path.is_file():
                             missing_in_cache.append(rel_path)
+                            missing_links.append(line_path)
                         else:
                             line_path.parent.mkdir(parents=True, exist_ok=True)
                             line_path.symlink_to(cache_path)
@@ -817,7 +819,9 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
                             logger.info(f"Cache job failed. See {log_path}")
                         if cache_done:
                             logger.info(f"Missing files succesfully cached.")
-                            for f in missing_in_cache:
+                            for i,f in enumerate(missing_in_cache):
+                                missing_links[i].parent.mkdir(parents=True, exist_ok=True)
+                                missing_links[i].symlink_to((cache_root / f).resolve())
                             if done_path.is_file():
                                 os.chmod(done_path.absolute(),stat.S_IWRITE)
                             os.remove(done_path.absolute())
