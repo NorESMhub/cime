@@ -716,6 +716,10 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
     cache_root = (
         case.get_value("DIN_CACHE_ROOT") if cache_root is None else cache_root
     )
+    expect(
+        os.path.isdir(cache_root),
+        "Invalid inputdata cache directory: '{}'".format(cache_root),
+    )
     cache_root=Path(cache_root).resolve()
     expect(
         os.path.isdir(data_list_dir),
@@ -741,6 +745,7 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
                 if (
                     description.endswith("datapath")
                     or description.endswith("data_path")
+                    or description.endswith("filepath")
                     or full_path.endswith("/dev/null")
                 ):
                     continue
@@ -812,6 +817,7 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
                             logger.info(f"Cache job failed. See {log_path}")
                         if cache_done:
                             logger.info(f"Missing files succesfully cached.")
+                            for f in missing_in_cache:
                             if done_path.is_file():
                                 os.chmod(done_path.absolute(),stat.S_IWRITE)
                             os.remove(done_path.absolute())
