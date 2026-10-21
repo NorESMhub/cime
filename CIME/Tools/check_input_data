@@ -53,6 +53,12 @@ def parse_command_line(args, description):
     parser.add_argument(
         "--data-list-dir", default="Buildconf", help="Where to find list of input files"
     )
+    
+    parser.add_argument(
+        "--input-cache-root", default=None,
+        help="The root directory where input data cache lives,\n"
+        "use xmlquery DIN_CACHE_ROOT to see default value.",
+    )
 
     parser.add_argument(
         "--download",
@@ -73,6 +79,7 @@ def parse_command_line(args, description):
         args.server,
         args.input_data_root,
         args.data_list_dir,
+        args.input_cache_root,
         args.download,
         args.chksum,
     )
@@ -86,12 +93,38 @@ def _main_func(description):
         address,
         input_data_root,
         data_list_dir,
+        input_cache_root,
         download,
         chksum,
     ) = parse_command_line(sys.argv, description)
 
     with Case() as case:
-        if case.get_value('MACHINE') != 'olivia':
+        if input_cache_root or case.get_value('DIN_CACHE_ROOT') !='UNSET':
+                        # On olivia, we are using special cache directory to manage inputdata.
+            # it is populated based on config toml's that are picked up by a hydrator
+            # from a specific cdl service on NIRD.
+            
+            files_cached = case.link_with_cache(
+                input_data_root=input_data_root,
+                cache_root=input_cache_root,
+                data_list_dir=data_list_dir,
+                cache_files=download)
+            
+            if (not files_cached) and download:
+                sys.exit(0
+                    if case.check_all_input_data(
+                        protocol=protocol,
+                        address=address,
+                        input_data_root=input_data_root,
+                        data_list_dir=data_list_dir,
+                        download=download,
+                        chksum=chksum,
+                    )
+                    else 1
+                )
+            else:
+                sys.exit(0 if files_cached else 1)
+        else:
             sys.exit(
                 0
                 if case.check_all_input_data(
@@ -104,11 +137,7 @@ def _main_func(description):
                 )
                 else 1
             )
-        else:
-            # On olivia, we are using special cache directory to manage inputdata.
-            # it is populated based on config toml's that are picked up by a hydrator
-            # from a specific cdl service on NIRD.
-            print("TODO")
+
 
 
 ###############################################################################

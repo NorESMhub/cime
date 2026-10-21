@@ -163,6 +163,7 @@ class ERI(SystemTestsCommon):
         with clone1:
             clone1.case_setup(test_mode=True, reset=True)
             # if the initial case is hybrid this will put the reference data in the correct location
+            #TODO might need link_with_cache here, unless the base case has cashed everything already
             clone1.check_all_input_data()
 
             self._skip_pnl = False

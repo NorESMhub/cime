@@ -9,6 +9,7 @@ import CIME.Servers
 import glob, hashlib, shutil
 import time
 from pathlib import Path
+import stat
 
 logger = logging.getLogger(__name__)
 # The inputdata_checksum.dat file will be read into this hash if it's available
@@ -699,21 +700,21 @@ def md5(fname):
     return hash_md5.hexdigest()
 
 
-def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf"):
+def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",cache_files=False):
     
     """
     Link files existing in DIN_CACHE_ROOT to DIN_LOC_ROOT if they exist.
     if they don't try to sync them with a cdl service through hydrator.
     """
     case.load_env(reset=True)
-
+    all_files_cached=False
     # Fill in defaults as needed
     input_data_root = (
         case.get_value("DIN_LOC_ROOT") if input_data_root is None else input_data_root
     )
     input_data_root=Path(input_data_root).resolve()
     cache_root = (
-        case.get_value("DIN_CACHE_ROOT") if input_data_root is None else input_data_root
+        case.get_value("DIN_CACHE_ROOT") if cache_root is None else cache_root
     )
     cache_root=Path(cache_root).resolve()
     expect(
@@ -734,31 +735,94 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf"):
             lines = fd.readlines()
         for line in lines:
             line = line.strip()
-            line_path = Path(line).resolve()
-            #check if file is there or a valid symlink
-            if str(input_data_root) in str(line_path):
-                #only check of existence of files that are suppose to be in i DIN_LOC_ROOT
-                if not (line_path.is_file() or (line_path.is_symlink() and line_path.exists())):
-                    rel_path=line_path.relative_to(input_data_root)
-                    cache_path = cache_root / rel_path
-                    if not cache_path.is_file():
-                        missing_in_cache.append(rel_path)
-                    else:
-                        line_path.parent.mkdir(parents=True, exist_ok=True)
-                        line_path.symlink_to(cache_path)
-    if missing_in_cache != []:
-        # get .conf template
-        cache_conf_template=Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
-        cache_conf_template = cache_conf_template.resolve()
-        if not cache_conf_template.is_file():
-            logger.error( f"config file for caching inputdata: {cache_conf_template} not found."
-                          f" Though caching of inputdata is required on {case.get_value("MACH")}")
-        manifest_path=Path(case.get_value("RUNDIR")) / Path("cached_inputdata.filelist")
-        with open(manifest_path,"w") as manifest:
-            for f in missing_in_cache:
-                manifest.write(f"{f}\n")
-        conf_path = Path(case.get_value("RUNDIR")) / Path(f"noresm-{os.environ.get("USER")}-{time.strftime("%Y%m%d-%H%M%S")}.conf")
-        shutil.copy(cache_conf_template,conf_path)
-        with open(conf_path,'a') as conf_file:
-            conf_file.write(f"manifest = {manifest_path.absolute()}")
-        
+            if line and not line.startswith("#"):
+                tokens = line.split("=")
+                description, full_path = tokens[0].strip(), tokens[1].strip()
+                if (
+                    description.endswith("datapath")
+                    or description.endswith("data_path")
+                    or full_path.endswith("/dev/null")
+                ):
+                    continue
+                if description.endswith("file") or description.endswith("filename"):
+                    # There are required input data with key, or 'description' entries
+                    # that specify in their names whether they are files or filenames
+                    # rather than 'datapath's or 'data_path's so we check to make sure
+                    # the input data list has correct non-path values for input files.
+                    # This check happens whether or not a file already exists locally.
+                    expect(
+                        (not full_path.endswith(os.sep)),
+                        "Unsupported directory path in input_data_list named {}. Line entry is '{} = {}'.".format(
+                            data_list_file, description, full_path
+                        ),
+                    )
+                if full_path:
+                    # expand xml variables
+                    full_path = case.get_resolved_value(full_path)
+
+                line_path = Path(full_path).resolve()
+                #We only check for files that are in DIN_LOC_ROOT since DIN_CACHE_ROOT can contain only those.
+                if str(input_data_root) in str(line_path):
+                    # Check if file the file in DIN_LOCK_ROOT exists or symlinked to an existing file
+                    if not (line_path.is_file() or (line_path.is_symlink() and line_path.exists())):
+                        rel_path=line_path.relative_to(input_data_root)
+                        cache_path = cache_root / rel_path
+                        if not cache_path.is_file():
+                            missing_in_cache.append(rel_path)
+                        else:
+                            line_path.parent.mkdir(parents=True, exist_ok=True)
+                            line_path.symlink_to(cache_path)
+    if missing_in_cache == []:
+        all_files_cached = True
+    else:
+        if cache_files:
+            # get .conf template
+            cache_conf_template=Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
+            cache_conf_template = cache_conf_template.resolve()
+            if not cache_conf_template.is_file():
+                logger.error( f"config file for caching inputdata: {cache_conf_template} not found."
+                              f" Though caching of inputdata is required on {case.get_value("MACH")}")
+            manifest_path=Path(case.get_value("RUNDIR")) / Path("cached_inputdata.filelist")
+            with open(manifest_path,"w") as manifest:
+                for f in missing_in_cache:
+                    manifest.write(f"{f}\n")
+                    logger.info(f"Will try to get {f} through cache job")
+            conf_name=f"noresm-{os.environ.get("USER")}-{time.strftime("%Y%m%d-%H%M%S")}"
+            conf_path = Path(case.get_value("RUNDIR")) / Path(f"{conf_name}.conf")
+            shutil.copy(cache_conf_template,conf_path)
+            with open(conf_path,'a') as conf_file:
+                conf_file.write(f"manifest = {manifest_path.absolute()}")
+            if conf_path.is_file():
+                shutil.copy(conf_path,cache_root.parent / Path("conf/"))
+            cache_out=False
+            fail_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.failed")
+            done_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.done")
+            log_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.json")
+            cache_start = time.perf_counter()
+            while cache_out:
+                time.sleep(5)
+                cache_fail=fail_path.is_file()
+                cache_done=done_path.is_file()
+                cache_curr=time.perf_counter()
+                if cache_curr-cache_start < 300:
+                    all_files_cached = cache_done
+                    cache_out = (cache_fail or cache_done)
+                    if cache_out:
+                        if cache_fail:
+                            logger.info(f"Cache job failed. See {log_path}")
+                        if cache_done:
+                            logger.info(f"Missing files succesfully cached.")
+                            if done_path.is_file():
+                                os.chmod(done_path.absolute(),stat.S_IWRITE)
+                            os.remove(done_path.absolute())
+                            if log_path.is_file():
+                                os.chmod(log_path.absolute(),stat.S_IWRITE)
+                            os.remove(log_path.absolute())
+                else:
+                    cache_out=True
+                    all_files_cached=False
+                    logger.error(f"Caching job timed out. try again or or download from servers")
+        else:
+          for file in missing_in_cache:
+              logger.info(f"Could not cache {file}")
+    return all_files_cached
