@@ -700,7 +700,7 @@ def md5(fname):
     return hash_md5.hexdigest()
 
 
-def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",cache_files=False):
+def link_with_cache(case,input_data_root=None,cache_root=None,data_list_dir="Buildconf",cache_files=False):
     
     """
     Link files existing in DIN_CACHE_ROOT to DIN_LOC_ROOT if they exist.
@@ -805,13 +805,15 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
             fail_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.failed")
             done_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.done")
             log_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.json")
+            sync_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.sync")
             cache_start = time.perf_counter()
-            while cache_out:
+            while not cache_out:
                 time.sleep(5)
                 cache_fail=fail_path.is_file()
                 cache_done=done_path.is_file()
+                cache_sync=sync_path.is_file()
                 cache_curr=time.perf_counter()
-                if cache_curr-cache_start < 300:
+                if cache_curr-cache_start < 3600:
                     all_files_cached = cache_done
                     cache_out = (cache_fail or cache_done)
                     if cache_out:
@@ -833,6 +835,6 @@ def link_with_cache(case,input_data_root,cache_root,data_list_dir="Buildconf",ca
                     all_files_cached=False
                     logger.error(f"Caching job timed out. try again or or download from servers")
         else:
-          for file in missing_in_cache:
-              logger.info(f"Could not cache {file}")
+          for i,file in enumerate(missing_links):
+              logger.info(f"Did not find {file} in cache {cache_root / missing_in_cache[i]}")
     return all_files_cached
