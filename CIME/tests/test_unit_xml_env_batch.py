@@ -6,6 +6,8 @@ import tempfile
 from contextlib import ExitStack
 from unittest import mock
 
+import pytest
+
 from CIME.core.exceptions import CIMEError
 from CIME.utils import expect
 from CIME.XML.env_batch import EnvBatch, get_job_deps
@@ -13,6 +15,47 @@ from CIME.XML.env_workflow import EnvWorkflow
 from CIME.BuildTools.configure import FakeCase
 
 # pylint: disable=unused-argument
+
+
+@pytest.mark.parametrize(
+    "walltime,walltime_format,expected",
+    [
+        ("01:10:00", None, "70m"),
+        ("00:10:30", None, "11m"),
+        ("01:10:00", "%M", "70"),
+        ("00:10:30", "%M", "11"),
+        ("01:10:00", "%Mm", "70m"),
+        ("01:10:00", "%Hh", "1.17h"),
+        ("02:00:00", "%Hh", "2h"),
+        ("00:00:30", "%Ss", "30s"),
+        ("48:00:00", "%Dd", "2d"),
+        ("36:00:00", "%Dd", "1.5d"),
+    ],
+)
+def test_flux_walltime(walltime, walltime_format, expected):
+    # Act
+    output = EnvBatch._flux_walltime(walltime, walltime_format)
+
+    # Assert
+    assert output == expected
+
+
+@pytest.mark.parametrize(
+    "walltime_format",
+    [
+        "%H",
+        "%S",
+        "%D",
+        "%H:%M:%S",
+        "%Hm",
+        "%Md",
+        "minutes",
+    ],
+)
+def test_flux_walltime_invalid_format(walltime_format):
+    with pytest.raises(CIMEError, match="not valid for flux"):
+        EnvBatch._flux_walltime("01:10:00", walltime_format)
+
 
 XML_BASE = b"""<?xml version="1.0"?>
 <file id="env_batch.xml" version="2.0">
@@ -188,6 +231,12 @@ XML_WORKFLOW = b"""<?xml version="1.0"?>
       These variables may be changed anytime during a run, they
       control jobs that will be submitted and their dependancies.
  </header>
+ <!-- the primary job takes its task and thread counts from the case, not from here -->
+ <group id="case.run">
+    <entry id="template" value="template.case.run">
+      <type>char</type>
+    </entry>
+ </group>
  <group id="case.test">
     <entry id="task_count" value="1">
       <type>char</type>
@@ -233,6 +282,7 @@ class FakeCaseWWorkflow(FakeCase):
         tasks_per_node,
         mem_per_task,
         max_mem,
+        batch_thread_count=None,
     ):
         super().__init__(compiler, mpilib, debug, comp_interface)
         self._vals["task_count"] = task_count
@@ -240,12 +290,24 @@ class FakeCaseWWorkflow(FakeCase):
         self._vals["tasks_per_node"] = tasks_per_node
         self._vals["mem_per_task"] = mem_per_task
         self._vals["max_mem"] = max_mem
+        # a real Case sets this attribute in initialize_derived_attributes and
+        # get_job_overrides reads it for the primary (case.run) job
+        self.thread_count = thread_count
+        # value the fake env_mach_pes returns from get_batch_thread_count; a real
+        # EnvMachPes returns 1 with ESMF-aware threading
+        self.batch_thread_count = (
+            thread_count if batch_thread_count is None else batch_thread_count
+        )
 
     def get_env(self, short_name):
         expect(
-            short_name == "workflow",
-            "FakeWWorkflow only can handle workflow as short_name sent in",
+            short_name in ("workflow", "mach_pes"),
+            "FakeWWorkflow only can handle workflow or mach_pes as short_name sent in",
         )
+        if short_name == "mach_pes":
+            mach_pes = mock.Mock()
+            mach_pes.get_batch_thread_count.return_value = self.batch_thread_count
+            return mach_pes
         with ExitStack() as stack:
             WorkflowFile = _open_temp_file(stack, XML_WORKFLOW)
             env_workflow = EnvWorkflow(infile=WorkflowFile.name)
@@ -271,6 +333,8 @@ class FakeCaseWWorkflow(FakeCase):
         self, item, attribute=None, subgroup="PRIMARY", resolved=True
     ):
         print(item)
+        if item is None:
+            return None
         expect(isinstance(item, str), "item must be a string")
         expect(("$" not in item), "$ not allowed in item for this fake")
         return item
@@ -568,6 +632,55 @@ class TestXMLEnvBatch(unittest.TestCase):
             expected_args = "  -w default -w long"
             assert submit_args == expected_args
 
+    def test_get_submit_args_workflow(self):
+        with tempfile.NamedTemporaryFile() as tfile:
+            tfile.write(
+                b"""<?xml version="1.0"?>
+<file id="env_batch.xml" version="2.0">
+  <header>
+      These variables may be changed anytime during a run, they
+      control arguments to the batch submit command.
+    </header>
+  <group id="config_batch">
+    <entry id="BATCH_SYSTEM" value="slurm">
+      <type>char</type>
+      <valid_values>miller_slurm,nersc_slurm,lc_slurm,moab,pbs,lsf,slurm,cobalt,cobalt_theta,none</valid_values>
+      <desc>The batch system type to use for this machine.</desc>
+    </entry>
+  </group>
+  <group id="job_submission">
+    <entry id="PROJECT_REQUIRED" value="FALSE">
+      <type>logical</type>
+      <valid_values>TRUE,FALSE</valid_values>
+      <desc>whether the PROJECT value is required on this machine</desc>
+    </entry>
+  </group>
+  <batch_system MACH="docker" type="slurm">
+    <submit_args>
+      <argument>-w default</argument>
+      <argument workflow="case.build">-w build</argument>
+      <argument workflow="case.run">-w run</argument>
+    </submit_args>
+    <queues>
+      <queue walltimemax="01:00:00" nodemax="1" default="true">short</queue>
+    </queues>
+  </batch_system>
+</file>
+"""
+            )
+
+            tfile.seek(0)
+
+            batch = EnvBatch(infile=tfile.name)
+
+            case = mock.MagicMock()
+            case.filename = mock.PropertyMock(return_value=tfile.name)
+
+            submit_args = batch.get_submit_args(case, "case.build")
+
+            expected_args = "  -w default -w build"
+            assert submit_args == expected_args
+
     @mock.patch.dict(os.environ, {"TEST": "GOOD"})
     def test_get_submit_args(self):
         with tempfile.NamedTemporaryFile() as tfile:
@@ -659,6 +772,60 @@ class TestXMLEnvBatch(unittest.TestCase):
             expected_args = "  --time 00:30:00 -p long --account CIME --no-arg --path /test -w docker"
 
             assert submit_args == expected_args
+
+    def test_get_batch_directives_workflow(self):
+        with tempfile.NamedTemporaryFile() as tfile:
+            tfile.write(
+                b"""<?xml version="1.0"?>
+<file id="env_batch.xml" version="2.0">
+  <header>
+      These variables may be changed anytime during a run, they
+      control arguments to the batch submit command.
+    </header>
+  <group id="config_batch">
+    <entry id="BATCH_SYSTEM" value="slurm">
+      <type>char</type>
+      <valid_values>miller_slurm,nersc_slurm,lc_slurm,moab,pbs,lsf,slurm,cobalt,cobalt_theta,none</valid_values>
+      <desc>The batch system type to use for this machine.</desc>
+    </entry>
+  </group>
+  <group id="job_submission">
+    <entry id="PROJECT_REQUIRED" value="FALSE">
+      <type>logical</type>
+      <valid_values>TRUE,FALSE</valid_values>
+      <desc>whether the PROJECT value is required on this machine</desc>
+    </entry>
+  </group>
+  <batch_system MACH="docker" type="slurm">
+    <batch_directive>#SBATCH</batch_directive>
+    <directives>
+      <directive>--all-jobs</directive>
+    </directives>
+    <directives workflow="case.build">
+      <directive>--build-only</directive>
+    </directives>
+    <directives workflow="case.run">
+      <directive>--run-only</directive>
+    </directives>
+    <queues>
+      <queue walltimemax="01:00:00" nodemax="1" default="true">short</queue>
+    </queues>
+  </batch_system>
+</file>
+"""
+            )
+
+            tfile.seek(0)
+
+            batch = EnvBatch(infile=tfile.name)
+            case = mock.MagicMock()
+            case.get_value.return_value = "short"
+
+            directives = batch.get_batch_directives(case, "case.build")
+
+            assert "--all-jobs" in directives
+            assert "--build-only" in directives
+            assert "--run-only" not in directives
 
     @mock.patch("CIME.XML.env_batch.EnvBatch.get")
     def test_get_queue_specs(self, get):
@@ -810,6 +977,370 @@ class TestXMLEnvBatch(unittest.TestCase):
         )
         env_workflow.set_value.assert_any_call(
             "JOB_WALLCLOCK_TIME", "05:00:00", subgroup="case.run"
+        )
+
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_value", return_value=None)
+    @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
+    # nodemin, nodemax, jobname, walltimemin, walltimemax, jobmin, jobmax, strict
+    @mock.patch(
+        "CIME.XML.env_batch.EnvBatch.get_queue_specs",
+        return_value=[
+            1,
+            1,
+            "case.run",
+            None,
+            None,
+            "12:00:00",
+            1,
+            1,
+            False,
+        ],
+    )
+    @mock.patch("CIME.XML.env_batch.EnvBatch.select_best_queue")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_default_queue")
+    def test_set_job_defaults_flux_walltime_minutes(
+        self, get_default_queue, select_best_queue, get_queue_specs, text, get_value
+    ):
+        # Context
+        case = mock.MagicMock()
+
+        batch_jobs = [
+            (
+                "case.run",
+                {
+                    "template": "template.case.run",
+                    "prereq": "$BUILD_COMPLETE and not $TEST",
+                },
+            )
+        ]
+
+        def case_get_value(*args, **kwargs):
+            if args[0] == "USER_REQUESTED_WALLTIME":
+                return "01:10:00"
+
+            return mock.MagicMock()
+
+        case.get_value = case_get_value
+
+        case.get_env.return_value.get_jobs.return_value = ["case.run"]
+
+        batch = EnvBatch()
+        batch.set_batch_system_type("flux")
+
+        # Act
+        batch.set_job_defaults(batch_jobs, case)
+
+        # Assert
+        env_workflow = case.get_env.return_value
+
+        env_workflow.set_value.assert_any_call(
+            "JOB_WALLCLOCK_TIME", "70m", subgroup="case.run"
+        )
+
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_value", return_value=None)
+    @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
+    # nodemin, nodemax, jobname, walltimemin, walltimemax, jobmin, jobmax, strict
+    @mock.patch(
+        "CIME.XML.env_batch.EnvBatch.get_queue_specs",
+        return_value=[
+            1,
+            1,
+            "case.run",
+            None,
+            None,
+            "12:00:00",
+            1,
+            1,
+            False,
+        ],
+    )
+    @mock.patch("CIME.XML.env_batch.EnvBatch.select_best_queue")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_default_queue")
+    def test_set_job_defaults_flux_walltime_partial_minute(
+        self, get_default_queue, select_best_queue, get_queue_specs, text, get_value
+    ):
+        # Context
+        case = mock.MagicMock()
+
+        batch_jobs = [
+            (
+                "case.run",
+                {
+                    "template": "template.case.run",
+                    "prereq": "$BUILD_COMPLETE and not $TEST",
+                },
+            )
+        ]
+
+        def case_get_value(*args, **kwargs):
+            if args[0] == "USER_REQUESTED_WALLTIME":
+                return "00:10:30"
+
+            return mock.MagicMock()
+
+        case.get_value = case_get_value
+
+        case.get_env.return_value.get_jobs.return_value = ["case.run"]
+
+        batch = EnvBatch()
+        batch.set_batch_system_type("flux")
+
+        # Act
+        batch.set_job_defaults(batch_jobs, case)
+
+        # Assert partial minutes round up so the job is not cut short
+        env_workflow = case.get_env.return_value
+
+        env_workflow.set_value.assert_any_call(
+            "JOB_WALLCLOCK_TIME", "11m", subgroup="case.run"
+        )
+
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_value")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
+    # nodemin, nodemax, jobname, walltimemin, walltimemax, jobmin, jobmax, strict
+    @mock.patch(
+        "CIME.XML.env_batch.EnvBatch.get_queue_specs",
+        return_value=[
+            1,
+            1,
+            "case.run",
+            None,
+            None,
+            "12:00:00",
+            1,
+            1,
+            False,
+        ],
+    )
+    @mock.patch("CIME.XML.env_batch.EnvBatch.select_best_queue")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_default_queue")
+    def test_set_job_defaults_flux_walltime_format_minutes(
+        self, get_default_queue, select_best_queue, get_queue_specs, text, get_value
+    ):
+        # Context, walltime_format %M emits bare total minutes for flux
+        get_value.side_effect = lambda name, *args, **kwargs: (
+            "%M" if name == "walltime_format" else None
+        )
+
+        case = mock.MagicMock()
+
+        batch_jobs = [
+            (
+                "case.run",
+                {
+                    "template": "template.case.run",
+                    "prereq": "$BUILD_COMPLETE and not $TEST",
+                },
+            )
+        ]
+
+        def case_get_value(*args, **kwargs):
+            if args[0] == "USER_REQUESTED_WALLTIME":
+                return "01:10:00"
+
+            return mock.MagicMock()
+
+        case.get_value = case_get_value
+
+        case.get_env.return_value.get_jobs.return_value = ["case.run"]
+
+        batch = EnvBatch()
+        batch.set_batch_system_type("flux")
+
+        # Act
+        batch.set_job_defaults(batch_jobs, case)
+
+        # Assert
+        env_workflow = case.get_env.return_value
+
+        env_workflow.set_value.assert_any_call(
+            "JOB_WALLCLOCK_TIME", "70", subgroup="case.run"
+        )
+
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_value")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
+    # nodemin, nodemax, jobname, walltimemin, walltimemax, jobmin, jobmax, strict
+    @mock.patch(
+        "CIME.XML.env_batch.EnvBatch.get_queue_specs",
+        return_value=[
+            1,
+            1,
+            "case.run",
+            None,
+            None,
+            "12:00:00",
+            1,
+            1,
+            False,
+        ],
+    )
+    @mock.patch("CIME.XML.env_batch.EnvBatch.select_best_queue")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_default_queue")
+    def test_set_job_defaults_flux_walltime_format_minutes_rounds_up(
+        self, get_default_queue, select_best_queue, get_queue_specs, text, get_value
+    ):
+        # Context, walltime_format %M emits whole minutes for flux
+        get_value.side_effect = lambda name, *args, **kwargs: (
+            "%M" if name == "walltime_format" else None
+        )
+
+        case = mock.MagicMock()
+
+        batch_jobs = [
+            (
+                "case.run",
+                {
+                    "template": "template.case.run",
+                    "prereq": "$BUILD_COMPLETE and not $TEST",
+                },
+            )
+        ]
+
+        def case_get_value(*args, **kwargs):
+            if args[0] == "USER_REQUESTED_WALLTIME":
+                return "00:10:30"
+
+            return mock.MagicMock()
+
+        case.get_value = case_get_value
+
+        case.get_env.return_value.get_jobs.return_value = ["case.run"]
+
+        batch = EnvBatch()
+        batch.set_batch_system_type("flux")
+
+        # Act
+        batch.set_job_defaults(batch_jobs, case)
+
+        # Assert
+        env_workflow = case.get_env.return_value
+
+        env_workflow.set_value.assert_any_call(
+            "JOB_WALLCLOCK_TIME", "11", subgroup="case.run"
+        )
+
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_value")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
+    # nodemin, nodemax, jobname, walltimemin, walltimemax, jobmin, jobmax, strict
+    @mock.patch(
+        "CIME.XML.env_batch.EnvBatch.get_queue_specs",
+        return_value=[
+            1,
+            1,
+            "case.run",
+            None,
+            None,
+            "12:00:00",
+            1,
+            1,
+            False,
+        ],
+    )
+    @mock.patch("CIME.XML.env_batch.EnvBatch.select_best_queue")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_default_queue")
+    def test_set_job_defaults_flux_walltime_format_fsd(
+        self, get_default_queue, select_best_queue, get_queue_specs, text, get_value
+    ):
+        # Context, walltime_format %Hh emits FSD hours for flux
+        get_value.side_effect = lambda name, *args, **kwargs: (
+            "%Hh" if name == "walltime_format" else None
+        )
+
+        case = mock.MagicMock()
+
+        batch_jobs = [
+            (
+                "case.run",
+                {
+                    "template": "template.case.run",
+                    "prereq": "$BUILD_COMPLETE and not $TEST",
+                },
+            )
+        ]
+
+        def case_get_value(*args, **kwargs):
+            if args[0] == "USER_REQUESTED_WALLTIME":
+                return "01:10:00"
+
+            return mock.MagicMock()
+
+        case.get_value = case_get_value
+
+        case.get_env.return_value.get_jobs.return_value = ["case.run"]
+
+        batch = EnvBatch()
+        batch.set_batch_system_type("flux")
+
+        # Act
+        batch.set_job_defaults(batch_jobs, case)
+
+        # Assert
+        env_workflow = case.get_env.return_value
+
+        env_workflow.set_value.assert_any_call(
+            "JOB_WALLCLOCK_TIME", "1.17h", subgroup="case.run"
+        )
+
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_value")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
+    # nodemin, nodemax, jobname, walltimemin, walltimemax, jobmin, jobmax, strict
+    @mock.patch(
+        "CIME.XML.env_batch.EnvBatch.get_queue_specs",
+        return_value=[
+            1,
+            1,
+            "case.run",
+            None,
+            None,
+            "12:00:00",
+            1,
+            1,
+            False,
+        ],
+    )
+    @mock.patch("CIME.XML.env_batch.EnvBatch.select_best_queue")
+    @mock.patch("CIME.XML.env_batch.EnvBatch.get_default_queue")
+    def test_set_job_defaults_flux_walltime_format_fsd_minutes(
+        self, get_default_queue, select_best_queue, get_queue_specs, text, get_value
+    ):
+        # Context, walltime_format %Mm emits FSD minutes for flux
+        get_value.side_effect = lambda name, *args, **kwargs: (
+            "%Mm" if name == "walltime_format" else None
+        )
+
+        case = mock.MagicMock()
+
+        batch_jobs = [
+            (
+                "case.run",
+                {
+                    "template": "template.case.run",
+                    "prereq": "$BUILD_COMPLETE and not $TEST",
+                },
+            )
+        ]
+
+        def case_get_value(*args, **kwargs):
+            if args[0] == "USER_REQUESTED_WALLTIME":
+                return "01:10:00"
+
+            return mock.MagicMock()
+
+        case.get_value = case_get_value
+
+        case.get_env.return_value.get_jobs.return_value = ["case.run"]
+
+        batch = EnvBatch()
+        batch.set_batch_system_type("flux")
+
+        # Act
+        batch.set_job_defaults(batch_jobs, case)
+
+        # Assert
+        env_workflow = case.get_env.return_value
+
+        env_workflow.set_value.assert_any_call(
+            "JOB_WALLCLOCK_TIME", "70m", subgroup="case.run"
         )
 
     @mock.patch("CIME.XML.env_batch.EnvBatch.text", return_value="default")
@@ -1266,10 +1797,64 @@ class TestXMLEnvBatch(unittest.TestCase):
         self.assertEqual(overrides["thread_count"], str(thread_count))
         self.assertEqual(overrides["num_nodes"], 1)
 
+    def test_get_job_overrides_esmf_aware_threading(self):
+        """Test that the primary job requests one core per task with ESMF-aware threading"""
+        # env_mach_pes reports one core per task, because ESMF creates the
+        # OpenMP threads from the cores of neighbouring tasks
+        overrides = self.run_get_job_overrides(
+            task_count=4,
+            thread_count=2,
+            mem_per_task=10,
+            tasks_per_node=4,
+            max_mem=235,
+            batch_thread_count=1,
+            job="case.run",
+        )
+        self.assertEqual(overrides["thread_count"], 1)
+
+    def test_get_job_overrides_primary_job_without_esmf_aware_threading(self):
+        """Test that the primary job leaves thread_count to the case without ESMF-aware threading"""
+        overrides = self.run_get_job_overrides(
+            task_count=4,
+            thread_count=2,
+            mem_per_task=10,
+            tasks_per_node=4,
+            max_mem=235,
+            job="case.run",
+        )
+        # no override is set, so the batch templates use case.thread_count
+        self.assertNotIn("thread_count", overrides)
+
+    def test_get_job_overrides_esmf_aware_threading_workflow_job(self):
+        """Test that ESMF-aware threading does not touch a workflow job's own thread_count"""
+        overrides = self.run_get_job_overrides(
+            task_count=4,
+            thread_count=2,
+            mem_per_task=10,
+            tasks_per_node=4,
+            max_mem=235,
+            batch_thread_count=1,
+        )
+        self.assertEqual(overrides["thread_count"], "2")
+
     def run_get_job_overrides(
-        self, task_count, thread_count, mem_per_task, tasks_per_node, max_mem
+        self,
+        task_count,
+        thread_count,
+        mem_per_task,
+        tasks_per_node,
+        max_mem,
+        batch_thread_count=None,
+        job="case.test",
     ):
-        """Setup and run get_job_overrides so it can be tested from a variety of tests"""
+        """Setup and run get_job_overrides so it can be tested from a variety of tests
+
+        Args:
+            batch_thread_count: cores per MPI task that the fake env_mach_pes
+                tells get_job_overrides to request, defaults to thread_count.
+            job: "case.test" takes its task and thread counts from the workflow
+                file, "case.run" is the primary job and takes them from the case.
+        """
 
         env_batch = EnvBatch()
         # NOTE: GPU_TYPE is assumed to be none, so no GPU settings will be done
@@ -1286,6 +1871,7 @@ class TestXMLEnvBatch(unittest.TestCase):
             mem_per_task=mem_per_task,
             tasks_per_node=tasks_per_node,
             max_mem=max_mem,
+            batch_thread_count=batch_thread_count,
         )
         totalpes = task_count * thread_count
 
@@ -1296,7 +1882,7 @@ class TestXMLEnvBatch(unittest.TestCase):
 
         case.set_value("MAX_GPUS_PER_NODE", 4)
         case.set_value("NGPUS_PER_NODE", 0)
-        overrides = env_batch.get_job_overrides("case.test", case)
+        overrides = env_batch.get_job_overrides(job, case)
         self.assertEqual(overrides["ngpus_per_node"], 0)
 
         return overrides

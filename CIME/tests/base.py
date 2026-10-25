@@ -55,7 +55,9 @@ class BaseTestCase(unittest.TestCase):
             if self.TEST_COMPILER is None
             else self.TEST_COMPILER
         )
-        self._baseline_name = "fake_testing_only_%s" % utils.get_timestamp()
+        self._baseline_name = (
+            f"fake_testing_only_{utils.get_timestamp()}_{utils.id_generator()}"
+        )
         self._baseline_area = os.path.join(self.TEST_ROOT, "baselines")
         self._testroot = self.TEST_ROOT
         self._hasbatch = self.MACHINE.has_batch_system() and not self.NO_BATCH
@@ -209,6 +211,8 @@ class BaseTestCase(unittest.TestCase):
         Convenience wrapper around create_test. Returns list of full paths to created cases. If multiple cases,
         the order of the returned list is not guaranteed to match the order of the arguments.
         """
+        extra_args = list(extra_args)
+
         # All stub model not supported in nuopc driver
         if self._driver == "nuopc" and "cime_developer" in extra_args:
             extra_args.append(
