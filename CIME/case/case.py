@@ -99,6 +99,7 @@ class Case(object):
         check_all_input_data,
         stage_refcase,
         check_input_data,
+        link_with_cache,
     )
 
     def __init__(self, case_root=None, read_only=True, record=False, non_local=False):

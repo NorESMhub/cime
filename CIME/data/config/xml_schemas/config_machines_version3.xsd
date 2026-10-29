@@ -45,6 +45,7 @@
   <xs:element name="DIN_LOC_ROOT_CLMFORC" type="xs:string"/>
   <xs:element name="DOUT_S_ROOT" type="xs:string"/>
   <xs:element name="BASELINE_ROOT" type="xs:string"/>
+  <xs:element name="DIN_CACHE_ROOT" type="xs:string"/>
   <xs:element name="CCSM_CPRNC" type="xs:string"/>
   <xs:element name="PERL5LIB" type="xs:string"/>
   <xs:element name="GMAKE" type="xs:string"/>
@@ -162,6 +163,8 @@
         <!-- BASELINE_ROOT:  Root directory for system test baseline files -->
         <xs:element ref="BASELINE_ROOT" minOccurs="0" maxOccurs="1"/>
         <!-- CCSM_CPRNC: location of the cprnc tool, compares model output in testing-->
+        <xs:element ref="DIN_CACHE_ROOT" minOccurs="0" maxOccurs="1"/>
+        <!-- DIN_CACHE_ROOT: location of the cached inputdata directory-->
         <xs:element ref="CCSM_CPRNC" minOccurs="0" maxOccurs="1"/>
         <!-- PERL5LIB: location of external PERL modules (this variable is deprecated) -->
         <xs:element ref="PERL5LIB" minOccurs="0" maxOccurs="1"/>

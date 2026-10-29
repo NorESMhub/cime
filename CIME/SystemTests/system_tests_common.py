@@ -674,6 +674,7 @@ class SystemTestsCommon(object):
         run_type = self._case.get_value("RUN_TYPE")
         rundir = self._case.get_value("RUNDIR")
         try:
+            # TODO add link_with cache here
             self._case.check_all_input_data()
         except CIMEError:
             caseroot = self._case.get_value("CASEROOT")

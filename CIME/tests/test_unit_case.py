@@ -26,7 +26,7 @@ class TestCaseSubmit(unittest.TestCase):
         # get_value arguments TEST, COMP_WAV, COMP_INTERFACE, BUILD_COMPLETE
         case.get_value.side_effect = ["/tmp/caseroot", "", "", True]
         case_submit.check_case(case, chksum=True)
-
+        # TODO add lin_with_cache here
         case.check_all_input_data.assert_called_with(chksum=True)
 
     @mock.patch("CIME.case.case_submit.lock_file")
