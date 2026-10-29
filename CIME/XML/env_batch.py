@@ -232,6 +232,19 @@ class EnvBatch(EnvBase):
             # Total PES accounts for threads as well as mpi tasks
             total_tasks = case.get_value("TOTALPES")
             thread_count = case.thread_count
+            # With ESMF-aware threading each MPI task must be given a single
+            # core, because ESMF creates a component's OpenMP threads from the
+            # cores of neighbouring tasks.  case.thread_count is not changed:
+            # it is still used to decide whether the model is built with
+            # OpenMP and to set OMP_NUM_THREADS.  The override is only set
+            # when it differs from case.thread_count, because on Cray systems
+            # aprun.py replaces every component's own thread count with the
+            # override whenever one is present.
+            batch_thread_count = case.get_env("mach_pes").get_batch_thread_count(
+                thread_count
+            )
+            if batch_thread_count != thread_count:
+                overrides["thread_count"] = batch_thread_count
         if int(total_tasks) < case.get_value("MAX_TASKS_PER_NODE"):
             overrides["max_tasks_per_node"] = total_tasks
 
@@ -484,7 +497,9 @@ class EnvBatch(EnvBase):
                         )
 
             walltime_format = self.get_value("walltime_format")
-            if walltime_format:
+            if self._batchtype == "flux":
+                walltime = self._flux_walltime(walltime, walltime_format)
+            elif walltime_format:
                 seconds = convert_to_seconds(walltime)
                 full_bab_time = convert_to_babylonian_time(seconds)
                 walltime = format_time(walltime_format, "%H:%M:%S", full_bab_time)
@@ -499,7 +514,60 @@ class EnvBatch(EnvBase):
                 "Job {} queue {} walltime {}".format(job, self.text(queue), walltime)
             )
 
-    def _match_attribs(self, attribs, case, queue):
+    @staticmethod
+    def _flux_walltime(walltime, walltime_format):
+        """Converts a walltime for Flux's ``-t/--time-limit``.
+
+        Flux accepts minutes or Flux Standard Duration (FSD, RFC 23)
+        rather than ``HH:MM:SS``. Unlike :func:`CIME.utils.format_time`,
+        which rearranges fields positionally, ``%H``, ``%M`` and ``%S``
+        here expand to the *total* duration expressed in that unit, so a
+        literal FSD suffix in the format yields a valid FSD value, e.g.
+        ``%Mm`` on ``01:10:00`` gives ``70m`` and ``%Hh`` gives ``1.17h``.
+        Bare ``%M`` yields whole minutes rounded up, while FSD formats
+        round up at two decimal places, so the job is never allotted less
+        time than requested. Without a format, the default is FSD minutes.
+
+        Only formats producing values Flux accepts are permitted: ``%M``
+        (bare minutes) or a specifier paired with its matching FSD suffix
+        (``%Ss``, ``%Mm``, ``%Hh``, ``%Dd``). Anything else, e.g. ``%H``
+        (a bare number Flux would read as minutes) or ``%H:%M:%S``, is
+        rejected.
+
+        Args:
+            walltime (str): Walltime in ``[[HH:]MM:]SS``.
+            walltime_format (str): Format string or None for the default.
+
+        Returns:
+            str: Walltime valid for Flux's ``-t/--time-limit``.
+
+        Raises:
+            CIMEError: If ``walltime_format`` cannot produce a value
+                valid for Flux.
+        """
+        seconds = convert_to_seconds(walltime)
+
+        if not walltime_format:
+            return "{:d}m".format(math.ceil(seconds / 60))
+
+        valid_formats = ("%M", "%Ss", "%Mm", "%Hh", "%Dd")
+        expect(
+            walltime_format in valid_formats,
+            "walltime_format {!r} is not valid for flux; expected one "
+            "of {}".format(walltime_format, ", ".join(valid_formats)),
+        )
+
+        def _total(match):
+            unit = {"H": 3600, "M": 60, "S": 1, "D": 86400}[match.group(1)]
+            if walltime_format == "%M":
+                value = math.ceil(seconds / unit)
+            else:
+                value = math.ceil(seconds / unit * 100) / 100
+            return "{:.2f}".format(value).rstrip("0").rstrip(".")
+
+        return re.sub(r"%([HMSD])", _total, walltime_format)
+
+    def _match_attribs(self, attribs, case, queue, workflow=None):
         # check for matches with case-vars
         for attrib in attribs:
             if attrib in ["default", "prefix"]:
@@ -508,6 +576,9 @@ class EnvBatch(EnvBase):
 
             elif attrib == "queue":
                 if not self._match(queue, attribs["queue"]):
+                    return False
+            elif attrib == "workflow":
+                if not self._match(workflow, attribs["workflow"]):
                     return False
 
             else:
@@ -574,7 +645,9 @@ class EnvBatch(EnvBase):
                 dnodes = self.get_children("directives", root=root)
                 for dnode in dnodes:
                     nodes = self.get_children("directive", root=dnode)
-                    if self._match_attribs(self.attrib(dnode), case, queue):
+                    if self._match_attribs(
+                        self.attrib(dnode), case, queue, workflow=job
+                    ):
                         for node in nodes:
                             directive = self.get_resolved_value(
                                 "" if self.text(node) is None else self.text(node)
@@ -669,7 +742,7 @@ class EnvBatch(EnvBase):
             name = None
             flag = None
             try:
-                flag, name = self._get_argument(case, arg)
+                flag, name = self._get_argument(case, arg, job)
             except ValueError:
                 continue
 
@@ -706,7 +779,7 @@ class EnvBatch(EnvBase):
 
         return submitargs
 
-    def _get_argument(self, case, arg):
+    def _get_argument(self, case, arg, job):
         flag = self.get(arg, "flag")
 
         name = self.get(arg, "name")
@@ -715,10 +788,15 @@ class EnvBatch(EnvBase):
         if flag is None:
             flag = self.text(arg)
             job_queue_restriction = self.get(arg, "job_queue")
+            workflow_restriction = self.get(arg, "workflow")
 
             if (
                 job_queue_restriction is not None
                 and job_queue_restriction != case.get_value("JOB_QUEUE")
+            ):
+                raise ValueError()
+            if workflow_restriction is not None and not self._match(
+                job, workflow_restriction
             ):
                 raise ValueError()
 
@@ -1285,6 +1363,12 @@ class EnvBatch(EnvBase):
                 num_nodes, num_tasks, name, walltime, job
             )
         )
+
+        # Use the queue for the workflow
+        if job is not None and self._env_workflow is not None:
+            workflow_queue = self._env_workflow.get_queue(job)
+            if workflow_queue and name is None:
+                name = workflow_queue
 
         # Make sure to check default queue first.
         qnodes = self.get_all_queues(name=name)
