@@ -7,7 +7,7 @@ through the Case module.
 """
 from copy import deepcopy
 import sys
-import glob, os, shutil, math, time, hashlib, socket, getpass
+import glob, os, re, shutil, math, time, hashlib, socket, getpass
 from CIME.XML.standard_module_setup import *
 
 # pylint: disable=import-error,redefined-builtin
@@ -2212,10 +2212,10 @@ directory, NOT in this subdirectory."""
             testlist = tests.get_tests(
                 compset=compset_alias, grid=grid_name, supported_only=True
             )
-            test_categories = ["prealpha", "prebeta"]
+            test_categories = re.compile(r"(prealpha)|(prebeta)")
             for test in testlist:
                 if (
-                    test["category"] in test_categories
+                    test_categories.match(test["category"])
                     or "aux_" in test["category"]
                     or get_cime_default_driver() in test["category"]
                 ):
