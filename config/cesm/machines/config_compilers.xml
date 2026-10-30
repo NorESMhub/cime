@@ -1178,7 +1178,7 @@ using a fortran linker.
   </SLIBS>
 </compiler>
 
-<compiler MACH="olivia">
+<compiler MACH="olivia" COMPILER="intel">
   <CPPDEFS>
    <append> -D$(OS) </append>
   </CPPDEFS>
@@ -1192,11 +1192,12 @@ using a fortran linker.
   <FFLAGS>
     <append DEBUG="FALSE"> -O2 </append>
     <append MODEL="blom"> -r8 </append>
-    <append MODEL="cam"> -init=zero,arrays </append>
+    <append MODEL="cice"> -init=zero,arrays </append>
+    <append MODEL="cam"> -init=zero,arrays -fpe0 </append> <!-- avoid CAM crashed in specific PEs, need both -->
   </FFLAGS>
-  <MPICC> mpiicc </MPICC>
-  <MPICXX> mpiicpc </MPICXX> 
-  <MPIFC> mpiifort </MPIFC>
+  <MPICC> mpiicx </MPICC>
+  <MPICXX> mpicpc </MPICXX>
+  <MPIFC> mpiifx </MPIFC>
   <PIO_FILESYSTEM_HINTS>lustre</PIO_FILESYSTEM_HINTS>
   <SLIBS>
     <append>-mkl=sequential -lnetcdff -lnetcdf</append>
