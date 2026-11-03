@@ -2308,7 +2308,7 @@ This allows using a different mpirun command to launch unit tests
         <command name="--force purge"></command>
         <command name="load">NRIS/CPU</command>
         <command name="load">git/2.45.1-GCCcore-13.3.0</command>
-        <command name="load">ESMF/8.8.0-intel-2024a-iimpi-ParallelIO-2.6.5</command>
+        <command name="load">ESMF/8.8.0-intel-2024a-ParallelIO-2.6.5</command>
         <command name="load">Python/3.12.3-GCCcore-13.3.0</command>
         <command name="load">PnetCDF/1.14.0-iimpi-2024a</command>
         <command name="load">netCDF/4.9.2-iimpi-2024a</command>
