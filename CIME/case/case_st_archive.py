@@ -1149,7 +1149,7 @@ def case_st_archive(
             logger.info(
                 "resubmitting from st_archive, resubmit={:d}".format(resubmit_cnt)
             )
-            # SLURM ONLY: st_archive is a single task job, so it runs in a
+                        # SLURM ONLY: st_archive is a single task job, so it runs in a
             # slurm partition that requires a memory request (--mem), and slurm
             # therefore sets SLURM_MEM_PER_NODE to that small value.  The
             # resubmitted run goes to a whole node partition that takes no

@@ -630,7 +630,6 @@ def _build_checks(
     returns the relative sharedpath directory for sharedlibraries
     """
     smp_build = case.get_value("SMP_BUILD")
-    build_status = case.get_value("BUILD_STATUS")
     expect(
         comp_interface in ("mct", "moab", "nuopc"),
         "Only supporting mct nuopc, or moab comp_interfaces at this time, found {}".format(
@@ -700,16 +699,6 @@ ERROR, SMP VALUES HAVE CHANGED
         ),
     )
 
-    expect(
-        build_status == 0,
-        """
-ERROR env_build HAS CHANGED
-  A manual clean of your obj directories is required
-  You should execute the following:
-    ./case.build --clean-all
-""",
-    )
-
     case.set_value("BUILD_COMPLETE", False)
 
     # User may have rm -rf their build directory
@@ -749,10 +738,6 @@ def _build_libraries(
     libs = list(dict.fromkeys(case.get_values("CASE_SUPPORT_LIBRARIES")))
     logger.info(f"libs from case_support_libraries {libs}")
     build_script = {}
-    cpl_in_complist = False
-    for l in complist:
-        if "cpl" in l:
-            cpl_in_complist = True
     # The libs variable should include a list of required support libraries.
     # The following block is provided for backward compatibility.
     if len(libs) < 1:
@@ -761,6 +746,9 @@ def _build_libraries(
             "libraries, please migrate to 'CASE_SUPPORT_LIBRARIES' variable."
         )
         mpilib = case.get_value("MPILIB")
+
+        # This is a bit hacky. The host model should define whatever
+        # shared libs it might need.
         if case.get_value("MODEL") in CESM_LIKE_MODELS:
             libs = ["gptl", "pio", "csm_share"]
         elif case.get_value("MODEL") == "e3sm":
@@ -1031,6 +1019,7 @@ def _clean_cache_impl(case):
 def _clean_impl(case, cleanlist, clean_all, clean_depends):
     ###############################################################################
     exeroot = os.path.abspath(case.get_value("EXEROOT"))
+    sharedlibroot = os.path.abspath(case.get_value("SHAREDLIBROOT"))
     case.load_env()
     if clean_all:
         # If cleanlist is empty just remove the bld directory
@@ -1040,7 +1029,6 @@ def _clean_impl(case, cleanlist, clean_all, clean_depends):
             shutil.rmtree(exeroot)
 
         # if clean_all is True also remove the sharedlibpath
-        sharedlibroot = os.path.abspath(case.get_value("SHAREDLIBROOT"))
         expect(sharedlibroot is not None, "No SHAREDLIBROOT defined in case")
         if sharedlibroot != exeroot and os.path.isdir(sharedlibroot):
             logging.warning("cleaning directory {}".format(sharedlibroot))
@@ -1068,10 +1056,20 @@ def _clean_impl(case, cleanlist, clean_all, clean_depends):
 
         for clean_item in things_to_clean:
             logging.info("Cleaning {}".format(clean_item))
-            cmake_path = os.path.join(cmake_comp_root, clean_item)
-            if os.path.exists(cmake_path):
-                # Item was created by cmake build system
-                clean_cmd = f"cd {cmake_path} && cmake --build . -t clean -v"
+            if config.build_model_use_cmake:
+                cmake_path = os.path.join(cmake_comp_root, clean_item)
+                if os.path.exists(cmake_path):
+                    # Item was created by cmake build system
+                    clean_cmd = f"cd {cmake_path} && cmake --build . -t clean -v"
+                else:
+                    # This was a cmake build but not for a component
+                    shared_dir_p = Path(sharedlibroot)
+                    clean_cmd = "echo removing "
+                    for subdir in shared_dir_p.rglob(clean_item):
+                        if subdir.is_dir():
+                            shutil.rmtree(subdir)
+                            clean_cmd += f" {subdir}"
+
             else:
                 # Item was created by classic build system
                 # do I need this? generate_makefile_macro(case, caseroot, clean_item)
