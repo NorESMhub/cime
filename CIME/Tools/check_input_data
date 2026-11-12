@@ -14,6 +14,12 @@ To verify the presence of required data use:
 
 To obtain missing datasets from the input data server(s) use:
    ./check_input_data --download
+   
+On machines with inputdata caching (DIN_CACHE_ROOT variable is set)
+Symlinking cache directoriy with din_loc_root can be forced with:
+   ./check_input_data --cache-files
+   (--download impies this)
+
 
 This script is automatically called by the case control system, when the case is built and submitted.
 So manual usage of this script is optional.
@@ -67,6 +73,12 @@ def parse_command_line(args, description):
     )
 
     parser.add_argument(
+        "--cache-files",
+        action="store_true",
+        help="Attempt to download missing input files",
+    )
+
+    parser.add_argument(
         "--chksum",
         action="store_true",
         help="chksum inputfiles against inputdata_chksum.dat (if available)",
@@ -81,6 +93,7 @@ def parse_command_line(args, description):
         args.data_list_dir,
         args.input_cache_root,
         args.download,
+        args.cache_files,
         args.chksum,
     )
 
@@ -95,6 +108,7 @@ def _main_func(description):
         data_list_dir,
         input_cache_root,
         download,
+        cache_files,
         chksum,
     ) = parse_command_line(sys.argv, description)
 
@@ -108,9 +122,10 @@ def _main_func(description):
                 input_data_root=input_data_root,
                 cache_root=input_cache_root,
                 data_list_dir=data_list_dir,
-                cache_files=download)
+                no_cache=(not (download or cache_files)),
+                )
             
-            if False:
+            if not files_cached:
                 sys.exit(0
                     if case.check_all_input_data(
                         protocol=protocol,

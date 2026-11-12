@@ -312,7 +312,7 @@ def check_case(self, skip_pnl=False, chksum=False):
     logger.info("Checking that inputdata is available as part of case submission")
     files_cached=False
     if self.get_value("DIN_CACHE_ROOT") != "UNSET":
-        files_cached = self.link_with_cache(cache_files=True)
+        files_cached = self.link_with_cache(no_cache=False)
     if not files_cached:
         self.check_all_input_data(chksum=chksum)
 

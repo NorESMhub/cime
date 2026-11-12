@@ -701,7 +701,7 @@ def md5(fname):
     return hash_md5.hexdigest()
 
 
-def link_with_cache(case,input_data_root=None,cache_root=None,data_list_dir="Buildconf",cache_files=False):
+def link_with_cache(case,input_data_root=None,cache_root=None,data_list_dir="Buildconf",no_cache=False):
     
     """
     Link files existing in DIN_CACHE_ROOT to DIN_LOC_ROOT if they exist.
@@ -796,107 +796,113 @@ def link_with_cache(case,input_data_root=None,cache_root=None,data_list_dir="Bui
     if missing_in_cache == []:
         all_files_cached = True
     else:
-        if cache_files:
-            # get .conf template
-            timeout=300
-            cache_conf_template = Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
-            cache_conf_template = cache_conf_template.resolve()
-            if not cache_conf_template.is_file():
-                logger.error( f"Config file for caching inputdata: {cache_conf_template} not found."
-                              f" Though caching of inputdata is required on {case.get_value("MACH")}")
-            manifest_path = Path(case.get_value("RUNDIR")) / Path("inputdata_cache") / Path(f"cache-{time.strftime("%Y%m%d-%H%M%S")}.filelist")
-            manifest_path.parent.mkdir(parents=True,exist_ok=True)
-            with open(manifest_path,"w") as manifest:
-                for f in missing_in_cache:
-                    manifest.write(f"{f}\n")
-                    logger.info(f"Will try to get {f} through cache job")
-            conf_name = f"noresm-{os.environ.get("USER")}-{case.get_value("CASE")}-{time.strftime("%Y%m%d-%H%M%S")}"
-            run_conf = manifest_path.parent / Path(f"{conf_name}.conf")
-            conf_path = cache_root.parent / Path("conf") / Path(f"{conf_name}.conf")
-            shutil.copy(cache_conf_template,run_conf)
-            with open(run_conf,'a') as conf_file:
-                conf_file.write(f"manifest = {manifest_path.absolute()}")
-                conf_file.write("")
-            dry_run=True
-            if not dry_run:
-                if conf_path.is_file():
-                    shutil.copy(run_conf,conf_path)
-                cache_out=False
-                fail_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.failed")
-                done_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.done")
-                log_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.json")
-                sync_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.sync")
-                cache_start = time.perf_counter()
-                while not cache_out:
-                    cache_conf=cache_path.is_file()
-                    cache_fail=fail_path.is_file()
-                    cache_done=done_path.is_file()
-                    cache_sync=sync_path.is_file()
-                    cache_excode = 5
-                    # even though cache hydrator jobs overwrite the .conf file itself
-                    # the next block is the order of priority for checking if caching was done
-                    if cache_conf:
-                        cache_excode = 1
-                    if cache_sync:
-                        cache_excode = 2
-                    if cache_done:
-                        cache_excode = 3
-                    if cache_fail:
-                        cache_excode = 4
-                    cache_curr=time.perf_counter()
-                    if cache_excode<3:
-                        if cache_curr-cache_start < timeout:
-                            time.sleep(5) # job not submitted or running, do nothing
+
+        # get .conf template
+        timeout=300
+        cache_conf_template = Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
+        cache_conf_template = cache_conf_template.resolve()
+        if not cache_conf_template.is_file():
+            logger.error( f"Config file for caching inputdata: {cache_conf_template} not found."
+                          f" Though caching of inputdata is required on {case.get_value("MACH")}")
+        manifest_path = Path(case.get_value("CASEROOT")) / Path("inputdata_cache") / Path(f"cache-{time.strftime("%Y%m%d-%H%M%S")}.filelist")
+        manifest_path.parent.mkdir(parents=True,exist_ok=True)
+        with open(manifest_path,"w") as manifest:
+            for f in missing_in_cache:
+                manifest.write(f"{f}\n")
+                logger.info(f"Will try to get {f} through cache job")
+        conf_name = f"noresm-{os.environ.get("USER")}-{case.get_value("CASE")}-{time.strftime("%Y%m%d-%H%M%S")}"
+        run_conf = manifest_path.parent / Path(f"{conf_name}.conf")
+        conf_path = cache_root.parent / Path("conf") / Path(f"{conf_name}.conf")
+        shutil.copy(cache_conf_template,run_conf)
+        with open(run_conf,'a') as conf_file:
+            conf_file.write(f"\n")
+            conf_file.write(f"manifest = {manifest_path.absolute()}")
+            conf_file.write("")
+        if not no_cache:
+            if not conf_path.is_file():
+                shutil.copy(run_conf,conf_path)
+            cache_out=False
+            fail_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.failed")
+            done_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.done")
+            log_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.json")
+            sync_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.sync")
+            cache_start = time.perf_counter()
+            while not cache_out:
+                cache_conf=cache_path.is_file()
+                cache_fail=fail_path.is_file()
+                cache_done=done_path.is_file()
+                cache_sync=sync_path.is_file()
+                cache_excode = 0
+                # even though cache hydrator jobs overwrite the .conf file itself
+                # the next block is the order of priority for checking if caching was done
+                if cache_conf:
+                    cache_excode = 1
+                if cache_sync:
+                    cache_excode = 2
+                if cache_done:
+                    cache_excode = 3
+                if cache_fail:
+                    cache_excode = 4
+                cache_curr=time.perf_counter()
+                if cache_excode<3:
+                    if cache_curr-cache_start < timeout:
+                        time.sleep(5) # job not submitted or running, do nothing
+                        continue
+                    else:
+                        if timeout < 1200 and cache_conf:
+                            logger.warning(f"Waiting for cache job to start for another 5 min")
+                            timeout = timeout + 300
                             continue
                         else:
-                            if timeout < 1200 and cache_conf:
-                                logger.warning(f"Waiting for cache job to start for another 5 min")
-                                timeout = timeout + 300
-                                continue
-                            else:
-                                if cache_conf:
-                                    logger.info(f"Caching job did not start. Timed out at {timeout} s")
-                                    logger.info(f"Removing {conf_path}")
-                                    os.remove(conf_path.absolute())
+                            if cache_conf:
+                                logger.info(f"Caching job did not start. Timed out at {timeout} s")
+                                logger.info(f"Removing {conf_path}")
+                                os.remove(conf_path.absolute())
+                                cache_out = False
+                                all_files_cached = False
+                                break
+                            if cache_sync:
+                                if timeout < 3600:
+                                    logger.info(f"Caching job running too long. Timed out at {timeout} s including waiting time. Adding another 5 min")
+                                    timeout = timeout + 300
+                                    continue
+                                else:
                                     cache_out = False
                                     all_files_cached = False
-                                    break
-                                if cache_sync:
-                                    if timeout < 3600:
-                                        logger.info(f"Caching job running too long. Timed out at {timeout} s including waiting time. Adding another 5 min")
-                                        timeout = timeout + 300
-                                        continue
-                                    else:
-                                        cache_out = False
-                                        all_files_cached = False
-                                        logger.error(f"Caching job running too long. Timed out at {timeout} s including waiting time. Aborting")
+                                    logger.error(f"Caching job running too long. Timed out at {timeout} s including waiting time. Aborting")
 
-                        
-                        if cache_out:
-                            if cache_fail:
-                                try:
-                                    with open(log_path, 'r', encoding='utf-8') as log_json:
-                                        log_info=json.load(log_json)
-                                        logger.info(f"Cache job failed. See {log_info["log_location"]}")
-                                except:
-                                    logger.info(f"Cache job failed. Could not get the log file location")
-                                
-                            if cache_done:
-                                logger.info(f"Missing files succesfully cached.")
-                                for i,f in enumerate(missing_in_cache):
-                                    missing_links[i].parent.mkdir(parents=True, exist_ok=True)
-                                    missing_links[i].symlink_to((cache_root / f).resolve())
-                                if done_path.is_file():
-                                    os.chmod(done_path.absolute(),stat.S_IWRITE)
-                                os.remove(done_path.absolute())
-                                if log_path.is_file():
-                                    os.chmod(log_path.absolute(),stat.S_IWRITE)
-                                os.remove(log_path.absolute())
-                    else:
-                        cache_out=True
-                        all_files_cached=False
-                        logger.error(f"Caching job timed out. try again or or download from servers")
+                else:
+                                    
+                    if cache_fail:
+                        try:
+                            with open(log_path, 'r', encoding='utf-8') as log_json:
+                                log_info=json.load(log_json)
+                                logger.info(f"Cache job failed. See {log_info["log_location"]}")
+                        except:
+                            logger.info(f"Cache job failed. Could not get the log file location")
+                        # even though not all files got cached, we are getting out of the loop.
+                        cache_out = True
+                    if cache_done:
+                        logger.info(f"Missing files succesfully cached.")
+                        cache_out = True
+                        if done_path.is_file():
+                            os.chmod(done_path.absolute(),stat.S_IWRITE)
+                        os.remove(done_path.absolute())
+                        if log_path.is_file():
+                            os.chmod(log_path.absolute(),stat.S_IWRITE)
+                        os.remove(log_path.absolute())
+                        all_files_cached = True
+                    for i,f in enumerate(missing_in_cache):
+                        if (cache_root / f).resolve().is_file():
+                            missing_links[i].parent.mkdir(parents=True, exist_ok=True)
+                            missing_links[i].symlink_to((cache_root / f).resolve())
+                        else:
+                            logger.info(f"Did not find {str(f)} in cache {str(cache_root)}")
+                            all_files_cached = False
+                    break
         else:
-          for i,file in enumerate(missing_links):
-              logger.info(f"Did not find {file} in cache {cache_root / missing_in_cache[i]}")
+            logger.info("Not caching missing files:")
+            for i,file in enumerate(missing_links):
+                logger.info(f"Did not find {file} in cache {cache_root / missing_in_cache[i]}")
+
     return all_files_cached
