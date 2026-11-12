@@ -75,7 +75,7 @@ def parse_command_line(args, description):
     parser.add_argument(
         "--cache-files",
         action="store_true",
-        help="Attempt to download missing input files",
+        help="Attempt to get missing input files from cache",
     )
 
     parser.add_argument(

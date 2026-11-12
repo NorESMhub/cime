@@ -7,7 +7,7 @@ through the Case module.
 """
 from copy import deepcopy
 import sys
-import glob, os, shutil, math, time, hashlib, socket, getpass
+import glob, os, re, shutil, math, time, hashlib, socket, getpass
 from CIME.XML.standard_module_setup import *
 
 # pylint: disable=import-error,redefined-builtin
@@ -1542,7 +1542,10 @@ class Case(object):
         if project is not None:
             self.set_value("PROJECT", project)
         elif machobj.get_value("PROJECT_REQUIRED"):
-            expect(project is not None, "PROJECT_REQUIRED is true but no project found")
+            expect(
+                project is not None,
+                "This machine requires a project / account key, but none was set. Set one via the `--project` option to create_newcase/create_test or by setting the PROJECT environment variable.",
+            )
         # Get charge_account id if it exists
         charge_account = get_charge_account(machobj, project)
         if charge_account is not None:
@@ -2155,15 +2158,14 @@ directory, NOT in this subdirectory."""
         )
 
     def set_model_version(self, model):
-        version = "unknown"
         srcroot = self.get_value("SRCROOT")
         version = get_current_commit(True, srcroot, tag=(model in CESM_LIKE_MODELS))
 
-        self.set_value("MODEL_VERSION", version)
-
-        if version != "unknown":
+        if version is not None:
+            self.set_value("MODEL_VERSION", version)
             logger.info("{} model version found: {}".format(model, version))
         else:
+            self.set_value("MODEL_VERSION", "unknown")
             logger.warning("WARNING: No {} Model version found.".format(model))
 
     def load_env(self, reset=False, job=None, verbose=False):
@@ -2211,10 +2213,10 @@ directory, NOT in this subdirectory."""
             testlist = tests.get_tests(
                 compset=compset_alias, grid=grid_name, supported_only=True
             )
-            test_categories = ["prealpha", "prebeta"]
+            test_categories = re.compile(r"(prealpha)|(prebeta)")
             for test in testlist:
                 if (
-                    test["category"] in test_categories
+                    test_categories.match(test["category"])
                     or "aux_" in test["category"]
                     or get_cime_default_driver() in test["category"]
                 ):
