@@ -911,15 +911,15 @@ def _link_with_cache_impl(case,
         cache_conf_template = Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
         cache_conf_template = cache_conf_template.resolve()
         if not cache_conf_template.is_file():
-            logger.error( f"Config file for caching inputdata: {cache_conf_template} not found."
-                          f" Though caching of inputdata is required on {case.get_value("MACH")}")
-        manifest_path = Path(case.get_value("CASEROOT")) / Path("inputdata_cache") / Path(f"cache-{time.strftime("%Y%m%d-%H%M%S")}.filelist")
+            logger.error( f"""Config file for caching inputdata: {cache_conf_template} not found." +
+                          f" Though caching of inputdata is required on {case.get_value("MACH")}""")
+        manifest_path = Path(case.get_value("CASEROOT")) / Path("inputdata_cache") / Path(f"cache-{time.strftime('%Y%m%d-%H%M%S')}.filelist")
         manifest_path.parent.mkdir(parents=True,exist_ok=True)
         with open(manifest_path,"w") as manifest:
             for f in missing_in_cache:
                 manifest.write(f"{f}\n")
                 logger.info(f"Will try to get {f} through cache job")
-        conf_name = f"noresm-{os.environ.get("USER")}-{case.get_value("CASE")}-{time.strftime("%Y%m%d-%H%M%S")}"
+        conf_name = f"noresm-{os.environ.get("USER")}-{case.get_value("CASE")}-{time.strftime('%Y%m%d-%H%M%S')}"
         run_conf = manifest_path.parent / Path(f"{conf_name}.conf")
         conf_path = cache_root.parent / Path("conf") / Path(f"{conf_name}.conf")
         shutil.copy(cache_conf_template,run_conf)
@@ -937,7 +937,7 @@ def _link_with_cache_impl(case,
             sync_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.sync")
             cache_start = time.perf_counter()
             while not cache_out:
-                cache_conf=cache_path.is_file()
+                cache_conf=conf_path.is_file()
                 cache_fail=fail_path.is_file()
                 cache_done=done_path.is_file()
                 cache_sync=sync_path.is_file()
