@@ -919,7 +919,7 @@ def _link_with_cache_impl(case,
             for f in missing_in_cache:
                 manifest.write(f"{f}\n")
                 logger.info(f"Will try to get {f} through cache job")
-        conf_name = f"noresm-{os.environ.get("USER")}-{case.get_value("CASE")}-{time.strftime('%Y%m%d-%H%M%S')}"
+        conf_name = f"noresm-{os.environ.get('USER')}-{case.get_value('CASE')}-{time.strftime('%Y%m%d-%H%M%S')}"
         run_conf = manifest_path.parent / Path(f"{conf_name}.conf")
         conf_path = cache_root.parent / Path("conf") / Path(f"{conf_name}.conf")
         shutil.copy(cache_conf_template,run_conf)
@@ -986,7 +986,7 @@ def _link_with_cache_impl(case,
                         try:
                             with open(log_path, 'r', encoding='utf-8') as log_json:
                                 log_info=json.load(log_json)
-                                logger.info(f"Cache job failed. See {log_info["log_location"]}")
+                                logger.info(f"Cache job failed. See {log_info['log_location']}")
                         except:
                             logger.info(f"Cache job failed. Could not get the log file location")
                         # even though not all files got cached, we are getting out of the loop.
