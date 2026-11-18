@@ -988,12 +988,6 @@ def _link_with_cache_impl(case,
                     if cache_done:
                         logger.info(f"Missing files succesfully cached.")
                         cache_out = True
-                        if done_path.is_file():
-                            os.chmod(done_path.absolute(),stat.S_IWRITE)
-                        os.remove(done_path.absolute())
-                        if log_path.is_file():
-                            os.chmod(log_path.absolute(),stat.S_IWRITE)
-                        os.remove(log_path.absolute())
                         all_files_cached = True
                     for i,f in enumerate(missing_in_cache):
                         if (cache_root / f).resolve().is_file():
