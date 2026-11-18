@@ -1195,6 +1195,12 @@ using a fortran linker.
     <append MODEL="cice"> -init=zero,arrays </append>
     <append MODEL="cam"> -init=zero,arrays -fpe0 </append> <!-- avoid CAM crashed in specific PEs, need both -->
   </FFLAGS>
+  <!-- ifx implements "-check uninit" (set in the generic intel DEBUG FFLAGS) with -->
+  <!-- MemorySanitizer, so the same option is needed at link time to pull in the -->
+  <!-- msan runtime (otherwise: undefined reference to __msan_init). -->
+  <LDFLAGS>
+    <append DEBUG="TRUE"> -check uninit </append>
+  </LDFLAGS>
   <MPICC> mpiicx </MPICC>
   <MPICXX> mpiicpx </MPICXX>
   <MPIFC> mpiifx </MPIFC>
