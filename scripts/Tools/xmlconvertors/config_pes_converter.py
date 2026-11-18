@@ -12,7 +12,7 @@ The location of these files are needed by the script:
 
 from standard_script_setup import *
 from CIME.utils import run_cmd
-from distutils.spawn import find_executable
+from shutil import which
 import xml.etree.ElementTree as ET
 import grid_xml_converter
 LOGGER = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ class Cime5PesNode(PesNode):
             self.data['comment'] = commentnode.text
         for tag in ['ntasks', 'nthrds', 'rootpe']:
             node = pesnode.find(tag)
-            for child in node.getchildren():
+            for child in list(node):
                 self.data[tag][child.tag] = child.text.strip()
 
 class Cime2PesNode(PesNode):
@@ -221,7 +221,7 @@ class PesTree(grid_xml_converter.DataTree):
                 root.append(ET.Element('WITH'))
             if a is not None:
                 root.append(a.to_cime5())
-        xmllint = find_executable("xmllint")
+        xmllint = which("xmllint")
         if xmllint is not None:
             run_cmd("{} --format --output {} -".format(xmllint, newfilename),
                     input_str=ET.tostring(root))
