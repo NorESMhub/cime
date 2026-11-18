@@ -1191,16 +1191,12 @@ using a fortran linker.
   <MPI_LIB_NAME>mpi</MPI_LIB_NAME>
   <FFLAGS>
     <append DEBUG="FALSE"> -O2 </append>
+    <!-- ifx implements -check uninit (generic intel DEBUG flags) with MemorySanitizer, which fails to build/link; turn it off -->
+    <append DEBUG="TRUE"> -check nouninit </append>
     <append MODEL="blom"> -r8 </append>
     <append MODEL="cice"> -init=zero,arrays </append>
     <append MODEL="cam"> -init=zero,arrays -fpe0 </append> <!-- avoid CAM crashed in specific PEs, need both -->
   </FFLAGS>
-  <!-- ifx implements "-check uninit" (set in the generic intel DEBUG FFLAGS) with -->
-  <!-- MemorySanitizer, so the same option is needed at link time to pull in the -->
-  <!-- msan runtime (otherwise: undefined reference to __msan_init). -->
-  <LDFLAGS>
-    <append DEBUG="TRUE"> -check uninit </append>
-  </LDFLAGS>
   <MPICC> mpiicx </MPICC>
   <MPICXX> mpiicpx </MPICXX>
   <MPIFC> mpiifx </MPIFC>
