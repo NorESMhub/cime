@@ -1550,7 +1550,15 @@ class Case(object):
         charge_account = get_charge_account(machobj, project)
         if charge_account is not None:
             self.set_value("CHARGE_ACCOUNT", charge_account)
-
+        # This has to be set here, because otherwise
+        # PROJECT is resolved into env_workflow and can be multiple.
+        # if PROJECT is None at this point, then config_machines.xml.
+        try:
+            project_root = self.get_value("D_PROJECT_ROOT")
+        except:
+            project_root=None
+            expect(project_root is not None,"Could not resolve D_PROJECT_ROOT")
+        self.set_value("D_PROJECT_ROOT",project_root)
         # Resolve the CIME_OUTPUT_ROOT variable, other than this
         # we don't want to resolve variables until we need them
         if output_root is None:
