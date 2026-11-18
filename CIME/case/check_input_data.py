@@ -879,11 +879,8 @@ def _link_with_cache_impl(case,
 
                 line_path = Path(full_path).resolve()
                 #We only check for files that are in DIN_LOC_ROOT since DIN_CACHE_ROOT can contain only those.
-                if str(input_data_root) in str(line_path):
-                    if str(line_path).endswith(os.sep):
-                        # don't do anything with directories for now, there is a check later.
-                        missing_dirs.append(line_path)
-                        continue
+                if line_path.is_relative_to(input_data_root):
+                    # we check only files. 
                     # Check if file the file in DIN_LOCK_ROOT exists or symlinked to an existing file
                     if not (line_path.is_file() or (line_path.is_symlink() and line_path.exists())):
                         rel_path=line_path.relative_to(input_data_root)
@@ -894,13 +891,6 @@ def _link_with_cache_impl(case,
                         else:
                             line_path.parent.mkdir(parents=True, exist_ok=True)
                             line_path.symlink_to(cache_path)
-    # resolve missing dirs and missin files.
-    # whole directories will get cached if they are specified.
-    if missing_in_cache !=[] and missing_dirs !=[]:
-        for d in missing_dirs:
-            m_files=[Path(f) for f in missing_in_cache if str(d) in str(f)]
-            for m in m_files:
-                missing_in_cache.pop(missing_in_cache.index(m))
 
     if missing_in_cache == []:
         all_files_cached = True
@@ -911,8 +901,8 @@ def _link_with_cache_impl(case,
         cache_conf_template = Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
         cache_conf_template = cache_conf_template.resolve()
         if not cache_conf_template.is_file():
-            logger.error( f"""Config file for caching inputdata: {cache_conf_template} not found." +
-                          f" Though caching of inputdata is required on {case.get_value("MACH")}""")
+            logger.error( f"""Config file for caching inputdata: {cache_conf_template} not found.
+                          Though caching of inputdata is required on {case.get_value("MACH")}""")
         manifest_path = Path(case.get_value("CASEROOT")) / Path("inputdata_cache") / Path(f"cache-{time.strftime('%Y%m%d-%H%M%S')}.filelist")
         manifest_path.parent.mkdir(parents=True,exist_ok=True)
         with open(manifest_path,"w") as manifest:
@@ -979,6 +969,10 @@ def _link_with_cache_impl(case,
                                     cache_out = False
                                     all_files_cached = False
                                     logger.error(f"Caching job running too long. Timed out at {timeout} s including waiting time. Aborting")
+                            if cache_excode == 0: # no files found
+                                cache_out = False
+                                all_files_cached = False
+                                logger.error(f"Caching job did not start no config files are found in {cache_root}.")
 
                 else:
                                     

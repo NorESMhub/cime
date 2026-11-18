@@ -113,7 +113,7 @@ def _main_func(description):
     ) = parse_command_line(sys.argv, description)
 
     with Case() as case:
-        if input_cache_root or case.get_value('DIN_CACHE_ROOT') !='UNSET':
+        if input_cache_root or not (case.get_value('DIN_CACHE_ROOT') in ('UNSET', None)):
                         # On olivia, we are using special cache directory to manage inputdata.
             # it is populated based on config toml's that are picked up by a hydrator
             # from a specific cdl service on NIRD.

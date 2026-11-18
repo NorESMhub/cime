@@ -162,9 +162,9 @@
         <xs:element ref="DOUT_S_ROOT" minOccurs="1" maxOccurs="1"/>
         <!-- BASELINE_ROOT:  Root directory for system test baseline files -->
         <xs:element ref="BASELINE_ROOT" minOccurs="0" maxOccurs="1"/>
-        <!-- CCSM_CPRNC: location of the cprnc tool, compares model output in testing-->
-        <xs:element ref="DIN_CACHE_ROOT" minOccurs="0" maxOccurs="1"/>
         <!-- DIN_CACHE_ROOT: location of the cached inputdata directory-->
+        <xs:element ref="DIN_CACHE_ROOT" minOccurs="0" maxOccurs="1"/>
+        <!-- CCSM_CPRNC: location of the cprnc tool, compares model output in testing-->
         <xs:element ref="CCSM_CPRNC" minOccurs="0" maxOccurs="1"/>
         <!-- PERL5LIB: location of external PERL modules (this variable is deprecated) -->
         <xs:element ref="PERL5LIB" minOccurs="0" maxOccurs="1"/>
