@@ -143,9 +143,9 @@
         <xs:element ref="PROJECT" minOccurs="0" maxOccurs="1"/>
         <!-- CHARGE_ACCOUNT: The name of the account to charge for batch jobs
           can be overridden in environment or $HOME/.cime/config -->
-        <xs:element ref="D_PROJECT_ROOT" minOccurs="0" maxOccurs="1"/>
-        <!-- Root directory of project's workspace. Needed for DIN_LOC and DOUT_S and CIME_OUT vars -->
         <xs:element ref="CHARGE_ACCOUNT" minOccurs="0" maxOccurs="1"/>
+        <!-- Root directory of project's workspace. Needed for DIN_LOC and DOUT_S and CIME_OUT vars -->
+        <xs:element ref="D_PROJECT_ROOT" minOccurs="0" maxOccurs="1"/>
         <!-- SAVE_TIMING_DIR: (Acme only) directory for archiving timing output -->
         <xs:element ref="SAVE_TIMING_DIR" minOccurs="0" maxOccurs="1"/>
         <!-- SAVE_TIMING_DIR_PROJECTS: (Acme only) projects whose jobs archive timing output -->

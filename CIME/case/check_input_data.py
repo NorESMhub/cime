@@ -8,7 +8,6 @@ import CIME.Servers
 
 import time
 from pathlib import Path
-import stat
 import json
 import errno, glob, hashlib, shutil, uuid
 
@@ -969,10 +968,12 @@ def _link_with_cache_impl(case,
                                     cache_out = False
                                     all_files_cached = False
                                     logger.error(f"Caching job running too long. Timed out at {timeout} s including waiting time. Aborting")
+                                    break
                             if cache_excode == 0: # no files found
                                 cache_out = False
                                 all_files_cached = False
                                 logger.error(f"Caching job did not start no config files are found in {cache_root}.")
+                                break
 
                 else:
                                     
@@ -992,7 +993,11 @@ def _link_with_cache_impl(case,
                     for i,f in enumerate(missing_in_cache):
                         if (cache_root / f).resolve().is_file():
                             missing_links[i].parent.mkdir(parents=True, exist_ok=True)
-                            missing_links[i].symlink_to((cache_root / f).resolve())
+                            if not missing_links[i].is_symlink():
+                                missing_links[i].symlink_to((cache_root / f).resolve())
+                            else:
+                              logger.info(f"File {(cache_root / f).resolve()} have been cached but symlink to it alredy exists")
+                              continue
                         else:
                             logger.info(f"Did not find {str(f)} in cache {str(cache_root)}")
                             all_files_cached = False
