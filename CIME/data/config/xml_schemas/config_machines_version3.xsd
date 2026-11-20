@@ -45,6 +45,7 @@
   <xs:element name="DIN_LOC_ROOT_CLMFORC" type="xs:string"/>
   <xs:element name="DOUT_S_ROOT" type="xs:string"/>
   <xs:element name="BASELINE_ROOT" type="xs:string"/>
+  <xs:element name="DIN_CACHE_ROOT" type="xs:string"/>
   <xs:element name="CCSM_CPRNC" type="xs:string"/>
   <xs:element name="PERL5LIB" type="xs:string"/>
   <xs:element name="GMAKE" type="xs:string"/>
@@ -75,6 +76,7 @@
   <xs:element name="TEST_TPUT_TOLERANCE" type="xs:string"/>
   <xs:element name="TEST_MEMLEAK_TOLERANCE" type="xs:string"/>
   <xs:element name="MAX_GB_OLD_TEST_DATA" type="xs:string"/>
+  <xs:element name="D_PROJECT_ROOT" type="xs:string"/>
 
 
   <!-- complex elements -->
@@ -142,6 +144,8 @@
         <!-- CHARGE_ACCOUNT: The name of the account to charge for batch jobs
           can be overridden in environment or $HOME/.cime/config -->
         <xs:element ref="CHARGE_ACCOUNT" minOccurs="0" maxOccurs="1"/>
+        <!-- Root directory of project's workspace. Needed for DIN_LOC and DOUT_S and CIME_OUT vars -->
+        <xs:element ref="D_PROJECT_ROOT" minOccurs="0" maxOccurs="1"/>
         <!-- SAVE_TIMING_DIR: (Acme only) directory for archiving timing output -->
         <xs:element ref="SAVE_TIMING_DIR" minOccurs="0" maxOccurs="1"/>
         <!-- SAVE_TIMING_DIR_PROJECTS: (Acme only) projects whose jobs archive timing output -->
@@ -161,6 +165,8 @@
         <xs:element ref="DOUT_S_ROOT" minOccurs="1" maxOccurs="1"/>
         <!-- BASELINE_ROOT:  Root directory for system test baseline files -->
         <xs:element ref="BASELINE_ROOT" minOccurs="0" maxOccurs="1"/>
+        <!-- DIN_CACHE_ROOT: location of the cached inputdata directory-->
+        <xs:element ref="DIN_CACHE_ROOT" minOccurs="0" maxOccurs="1"/>
         <!-- CCSM_CPRNC: location of the cprnc tool, compares model output in testing-->
         <xs:element ref="CCSM_CPRNC" minOccurs="0" maxOccurs="1"/>
         <!-- PERL5LIB: location of external PERL modules (this variable is deprecated) -->

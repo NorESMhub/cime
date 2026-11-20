@@ -14,6 +14,12 @@ To verify the presence of required data use:
 
 To obtain missing datasets from the input data server(s) use:
    ./check_input_data --download
+   
+On machines with inputdata caching (DIN_CACHE_ROOT variable is set)
+Symlinking cache directoriy with din_loc_root can be forced with:
+   ./check_input_data --cache-files
+   (--download impies this)
+
 
 This script is automatically called by the case control system, when the case is built and submitted.
 So manual usage of this script is optional.
@@ -53,11 +59,23 @@ def parse_command_line(args, description):
     parser.add_argument(
         "--data-list-dir", default="Buildconf", help="Where to find list of input files"
     )
+    
+    parser.add_argument(
+        "--input-cache-root", default=None,
+        help="The root directory where input data cache lives,\n"
+        "use xmlquery DIN_CACHE_ROOT to see default value.",
+    )
 
     parser.add_argument(
         "--download",
         action="store_true",
         help="Attempt to download missing input files",
+    )
+
+    parser.add_argument(
+        "--cache-files",
+        action="store_true",
+        help="Attempt to get missing input files from cache",
     )
 
     parser.add_argument(
@@ -73,7 +91,9 @@ def parse_command_line(args, description):
         args.server,
         args.input_data_root,
         args.data_list_dir,
+        args.input_cache_root,
         args.download,
+        args.cache_files,
         args.chksum,
     )
 
@@ -86,23 +106,53 @@ def _main_func(description):
         address,
         input_data_root,
         data_list_dir,
+        input_cache_root,
         download,
+        cache_files,
         chksum,
     ) = parse_command_line(sys.argv, description)
 
     with Case() as case:
-        sys.exit(
-            0
-            if case.check_all_input_data(
-                protocol=protocol,
-                address=address,
+        if input_cache_root or not (case.get_value('DIN_CACHE_ROOT') in ('UNSET', None)):
+                        # On olivia, we are using special cache directory to manage inputdata.
+            # it is populated based on config toml's that are picked up by a hydrator
+            # from a specific cdl service on NIRD.
+            
+            files_cached = case.link_with_cache(
                 input_data_root=input_data_root,
+                cache_root=input_cache_root,
                 data_list_dir=data_list_dir,
-                download=download,
-                chksum=chksum,
+                no_cache=(not (download or cache_files)),
+                )
+            
+            if not files_cached:
+                sys.exit(0
+                    if case.check_all_input_data(
+                        protocol=protocol,
+                        address=address,
+                        input_data_root=input_data_root,
+                        data_list_dir=data_list_dir,
+                        download=download,
+                        chksum=chksum,
+                    )
+                    else 1
+                )
+            else:
+                sys.exit(0 if files_cached else 1)
+        else:
+            sys.exit(
+                0
+                if case.check_all_input_data(
+                    protocol=protocol,
+                    address=address,
+                    input_data_root=input_data_root,
+                    data_list_dir=data_list_dir,
+                    download=download,
+                    chksum=chksum,
+                )
+                else 1
             )
-            else 1
-        )
+
 
 
 ###############################################################################

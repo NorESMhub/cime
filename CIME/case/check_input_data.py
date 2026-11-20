@@ -6,6 +6,9 @@ from CIME.utils import SharedArea, find_files, safe_copy, expect
 from CIME.XML.inputdata import Inputdata
 import CIME.Servers
 
+import time
+from pathlib import Path
+import json
 import errno, glob, hashlib, shutil, uuid
 
 logger = logging.getLogger(__name__)
@@ -785,3 +788,223 @@ def md5(fname):
         for chunk in iter(lambda: f.read(4096), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
+
+
+def link_with_cache(case,
+                    input_data_root=None,
+                    cache_root=None,
+                    data_list_dir="Buildconf",
+                    no_cache=False
+                    ):
+    """
+    Link files existing in DIN_CACHE_ROOT to DIN_LOC_ROOT if they exist.
+    if they don't try to sync them with a cdl service through hydrator.
+    """
+    with SharedArea():
+        return _link_with_cache_impl(case,input_data_root=input_data_root,
+                    cache_root=cache_root,
+                    data_list_dir=data_list_dir,
+                    no_cache=no_cache)
+
+
+
+
+def _link_with_cache_impl(case,
+                    input_data_root=None,
+                    cache_root=None,
+                    data_list_dir="Buildconf",
+                    no_cache=False
+                    ):
+    case.load_env(reset=True)
+    all_files_cached=False
+    # Fill in defaults as needed
+    input_data_root = (
+        case.get_value("DIN_LOC_ROOT") if input_data_root is None else input_data_root
+    )
+    input_data_root=Path(input_data_root).resolve()
+    cache_root = (
+        case.get_value("DIN_CACHE_ROOT") if cache_root is None else cache_root
+    )
+    expect(
+        os.path.isdir(cache_root),
+        "Invalid inputdata cache directory: '{}'".format(cache_root),
+    )
+    cache_root=Path(cache_root).resolve()
+    expect(
+        os.path.isdir(data_list_dir),
+        "Invalid data_list_dir directory: '{}'".format(data_list_dir),
+    )
+    data_list_files = find_files(data_list_dir, "*.input_data_list")
+    
+    if not data_list_files:
+        logger.warning(
+            "WARNING: No .input_data_list files found in dir '{}'".format(data_list_dir)
+        )
+
+    missing_in_cache=[]
+    missing_links=[]
+    missing_dirs=[]
+    for data_list_file in data_list_files:
+        logger.info("Loading input file list: '{}'".format(data_list_file))
+        with open(data_list_file, "r") as fd:
+            lines = fd.readlines()
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                tokens = line.split("=")
+                description, full_path = tokens[0].strip(), tokens[1].strip()
+                if (
+                    description.endswith("datapath")
+                    or description.endswith("data_path")
+                    or description.endswith("filepath")
+                    or full_path.endswith("/dev/null")
+                ):
+                    continue
+                if description.endswith("file") or description.endswith("filename"):
+                    # There are required input data with key, or 'description' entries
+                    # that specify in their names whether they are files or filenames
+                    # rather than 'datapath's or 'data_path's so we check to make sure
+                    # the input data list has correct non-path values for input files.
+                    # This check happens whether or not a file already exists locally.
+                    expect(
+                        (not full_path.endswith(os.sep)),
+                        "Unsupported directory path in input_data_list named {}. Line entry is '{} = {}'.".format(
+                            data_list_file, description, full_path
+                        ),
+                    )
+                if full_path:
+                    # expand xml variables
+                    full_path = case.get_resolved_value(full_path)
+
+                line_path = Path(full_path).resolve()
+                #We only check for files that are in DIN_LOC_ROOT since DIN_CACHE_ROOT can contain only those.
+                if line_path.is_relative_to(input_data_root):
+                    # we check only files. 
+                    # Check if file the file in DIN_LOCK_ROOT exists or symlinked to an existing file
+                    if not (line_path.is_file() or (line_path.is_symlink() and line_path.exists())):
+                        rel_path=line_path.relative_to(input_data_root)
+                        cache_path = cache_root / rel_path
+                        if not cache_path.is_file():
+                            missing_in_cache.append(rel_path)
+                            missing_links.append(line_path)
+                        else:
+                            line_path.parent.mkdir(parents=True, exist_ok=True)
+                            line_path.symlink_to(cache_path)
+
+    if missing_in_cache == []:
+        all_files_cached = True
+    else:
+
+        # get .conf template
+        timeout=300
+        cache_conf_template = Path(case.get_value("MACHDIR")) / Path(case.get_value("MACH")) / Path("inputdata_cache.conf")
+        cache_conf_template = cache_conf_template.resolve()
+        if not cache_conf_template.is_file():
+            logger.error( f"""Config file for caching inputdata: {cache_conf_template} not found.
+                          Though caching of inputdata is required on {case.get_value("MACH")}""")
+        manifest_path = Path(case.get_value("CASEROOT")) / Path("inputdata_cache") / Path(f"cache-{time.strftime('%Y%m%d-%H%M%S')}.filelist")
+        manifest_path.parent.mkdir(parents=True,exist_ok=True)
+        with open(manifest_path,"w") as manifest:
+            for f in missing_in_cache:
+                manifest.write(f"{f}\n")
+                logger.info(f"Will try to get {f} through cache job")
+        conf_name = f"noresm-{os.environ.get('USER')}-{case.get_value('CASE')}-{time.strftime('%Y%m%d-%H%M%S')}"
+        run_conf = manifest_path.parent / Path(f"{conf_name}.conf")
+        conf_path = cache_root.parent / Path("conf") / Path(f"{conf_name}.conf")
+        shutil.copy(cache_conf_template,run_conf)
+        with open(run_conf,'a') as conf_file:
+            conf_file.write(f"\n")
+            conf_file.write(f"manifest = {manifest_path.absolute()}")
+            conf_file.write("")
+        if not no_cache:
+            if not conf_path.is_file():
+                shutil.copy(run_conf,conf_path)
+            cache_out=False
+            fail_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.failed")
+            done_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.done")
+            log_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.json")
+            sync_path = cache_root.parent / Path("conf/") / Path(f"{conf_name}.sync")
+            cache_start = time.perf_counter()
+            while not cache_out:
+                cache_conf=conf_path.is_file()
+                cache_fail=fail_path.is_file()
+                cache_done=done_path.is_file()
+                cache_sync=sync_path.is_file()
+                cache_excode = 0
+                # even though cache hydrator jobs overwrite the .conf file itself
+                # the next block is the order of priority for checking if caching was done
+                if cache_conf:
+                    cache_excode = 1
+                if cache_sync:
+                    cache_excode = 2
+                if cache_done:
+                    cache_excode = 3
+                if cache_fail:
+                    cache_excode = 4
+                cache_curr=time.perf_counter()
+                if cache_excode<3:
+                    if cache_curr-cache_start < timeout:
+                        time.sleep(5) # job not submitted or running, do nothing
+                        continue
+                    else:
+                        if timeout < 1200 and cache_conf:
+                            logger.warning(f"Waiting for cache job to start for another 5 min")
+                            timeout = timeout + 300
+                            continue
+                        else:
+                            if cache_conf:
+                                logger.info(f"Caching job did not start. Timed out at {timeout} s")
+                                logger.info(f"Removing {conf_path}")
+                                os.remove(conf_path.absolute())
+                                cache_out = False
+                                all_files_cached = False
+                                break
+                            if cache_sync:
+                                if timeout < 3600:
+                                    logger.info(f"Caching job running too long. Timed out at {timeout} s including waiting time. Adding another 5 min")
+                                    timeout = timeout + 300
+                                    continue
+                                else:
+                                    cache_out = False
+                                    all_files_cached = False
+                                    logger.error(f"Caching job running too long. Timed out at {timeout} s including waiting time. Aborting")
+                                    break
+                            if cache_excode == 0: # no files found
+                                cache_out = False
+                                all_files_cached = False
+                                logger.error(f"Caching job did not start no config files are found in {cache_root}.")
+                                break
+
+                else:
+                                    
+                    if cache_fail:
+                        try:
+                            with open(log_path, 'r', encoding='utf-8') as log_json:
+                                log_info=json.load(log_json)
+                                logger.info(f"Cache job failed. See {log_info['log_location']}")
+                        except:
+                            logger.info(f"Cache job failed. Could not get the log file location")
+                        # even though not all files got cached, we are getting out of the loop.
+                        cache_out = True
+                    if cache_done:
+                        logger.info(f"Missing files succesfully cached.")
+                        cache_out = True
+                        all_files_cached = True
+                    for i,f in enumerate(missing_in_cache):
+                        if (cache_root / f).resolve().is_file():
+                            missing_links[i].parent.mkdir(parents=True, exist_ok=True)
+                            if not missing_links[i].is_symlink():
+                                missing_links[i].symlink_to((cache_root / f).resolve())
+                            else:
+                              logger.info(f"File {(cache_root / f).resolve()} have been cached but symlink to it alredy exists")
+                              continue
+                        else:
+                            logger.info(f"Did not find {str(f)} in cache {str(cache_root)}")
+                            all_files_cached = False
+                    break
+        else:
+            logger.info("Not caching missing files:")
+            for i,file in enumerate(missing_links):
+                logger.info(f"Did not find {file} in cache {cache_root / missing_in_cache[i]}")
+
+    return all_files_cached
