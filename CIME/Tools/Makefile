@@ -867,7 +867,7 @@ ifeq ($(OCN_SUBMODEL),moby)
 endif
 
 ifdef COSP_LIBDIR
-  ifeq ($(CIME_MODEL),cesm)
+  ifneq ($(filter cesm noresm,$(CIME_MODEL)),)
     ULIBDEP += $(COSP_LIBDIR)/libcosp.a
     # Additionally include RTTOV if asked via CAM_CONFIG_OPTS.
     ifeq ($(findstring -rttov,$(CAM_CONFIG_OPTS)),-rttov)
